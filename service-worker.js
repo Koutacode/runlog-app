@@ -1,4 +1,4 @@
-const cacheName = 'runlog-cache-v1';
+const cacheName = 'runlog-cache-v2';
 const assetsToCache = [
   '.',
   'index.html',
@@ -13,6 +13,18 @@ self.addEventListener('install', (event) => {
       return cache.addAll(assetsToCache);
     })
   );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((key) => key !== cacheName).map((key) => caches.delete(key))
+      );
+    })
+  );
+  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
