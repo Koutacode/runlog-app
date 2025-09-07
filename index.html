@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>運行管理アプリ</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>運行管理アプリ</h1>
+  </header>
+  <nav>
+    <button onclick="showForm()">新規記録</button>
+    <button onclick="showList()">一覧</button>
+    <button onclick="showSummary()">集計</button>
+    <button onclick="exportCSV()">CSV出力</button>
+  </nav>
+  <main id="content">
+    <!-- dynamic content -->
+  </main>
+</body>
+</html>
