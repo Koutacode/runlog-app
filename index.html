@@ -46,6 +46,26 @@
       <span class="icon">📤</span>
       <span>CSV出力</span>
     </button>
+
+    <!-- Additional event buttons for quick one‑tap logging during a trip.  These buttons
+         record the current time and location (and optional details) into the
+         ongoing trip’s event list.  They only function while a trip is active. -->
+    <button onclick="recordEvent('荷積み')">
+      <span class="icon">📦</span>
+      <span>荷積み</span>
+    </button>
+    <button onclick="recordEvent('荷卸し')">
+      <span class="icon">📤</span>
+      <span>荷卸し</span>
+    </button>
+    <button onclick="recordFuelEvent()">
+      <span class="icon">⛽</span>
+      <span>給油</span>
+    </button>
+    <button onclick="recordEvent('休憩')">
+      <span class="icon">☕</span>
+      <span>休憩</span>
+    </button>
   </nav>
   <main id="content">
     <!-- dynamic content -->
