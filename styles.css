@@ -4,6 +4,13 @@ body {
   padding: 0;
   background: #f2f2f2;
   color: #333;
+  /* On large screens (e.g. foldable devices when unfolded or tablets),
+     display the navigation and content side by side.  This improves
+     usability by placing frequently used actions within easy reach while
+     still showing the main content.  On smaller screens it remains
+     vertical. */
+  display: flex;
+  flex-direction: column;
 }
 
 header {
@@ -18,11 +25,20 @@ nav {
   justify-content: space-around;
   background: #e0e0e0;
   padding: 0.5rem;
+  flex-wrap: wrap; /* allow buttons to wrap to the next line on narrow screens */
 }
 
 nav button {
-  padding: 0.5rem 1rem;
-  font-size: 1rem;
+  /* Increase padding and font size to create larger, easier to tap controls,
+     following WCAG guidance for a minimum 44×44px touch target【282384608968313†L24-L33】.
+     Use flexbox in the button itself to align the icon and label side by side.
+     Larger icons help drivers quickly recognize each function. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 1.1rem;
   border: none;
   background: #fff;
   border-radius: 4px;
@@ -30,12 +46,86 @@ nav button {
   box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 
+/* Style the simple emoji icons in the navigation.  Larger font size makes the icons
+   more prominent without needing an external icon font. */
+nav button .icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
 nav button:hover {
   background: #f5f5f5;
 }
 
+/* Highlight the primary start/stop button so drivers can quickly find it.
+   Use a bold color and larger font, and allow it to flex to fill space. */
+#toggleTripBtn {
+  /* The start/stop button visually differs from other buttons.  When in the
+     "start" state it uses a calming blue.  When recording ("stop" state) it
+     turns red, making it obvious the timer is running.  Flex:1 ensures it
+     expands to fill available space on wide screens. */
+  font-weight: bold;
+  flex: 1;
+  color: #fff;
+}
+
+/* Start state styling */
+#toggleTripBtn.start {
+  background: #0066cc;
+}
+
+#toggleTripBtn.start:hover {
+  background: #005bb5;
+}
+
+/* Stop state styling */
+#toggleTripBtn.stop {
+  background: #cc3300;
+}
+
+#toggleTripBtn.stop:hover {
+  background: #b52a00;
+}
+
 main {
   padding: 1rem;
+}
+
+/* Layout wrapper styles.  The `.layout` div wraps the navigation and main
+   content so we can switch their arrangement at larger breakpoints without
+   impacting the header.  On mobile the wrapper stacks nav and main
+   vertically; on larger screens it becomes horizontal. */
+.layout {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Responsive layout for foldable/large screens.  When the viewport width is
+   at least 800px, switch to a two‑column layout: the navigation becomes a
+   vertical rail on the left and the main content occupies the remaining
+   space on the right.  Buttons expand to full width to maintain large
+   touch targets and are separated by spacing for clarity. */
+@media (min-width: 800px) {
+  .layout {
+    flex-direction: row;
+    min-height: calc(100vh - 60px); /* account for header height */
+  }
+  nav {
+    flex-direction: column;
+    align-items: stretch;
+    width: 220px;
+    height: 100%;
+    padding: 1rem;
+  }
+  nav button {
+    width: 100%;
+    margin-bottom: 0.8rem;
+    justify-content: flex-start;
+  }
+  main {
+    flex: 1;
+    padding: 1.5rem 2rem;
+  }
 }
 
 table {
@@ -45,11 +135,44 @@ table {
 
 table th, table td {
   border: 1px solid #ccc;
-  padding: 0.5rem;
+  /* Increase cell padding for better readability and easier tapping on rows. */
+  padding: 0.6rem 0.4rem;
+  font-size: 0.95rem;
 }
 
 table th {
   background: #f7f7f7;
+}
+
+/* Add alternating row background colours for improved readability on large screens */
+tbody tr:nth-child(even) {
+  background: #fcfcfc;
+}
+
+/* Make form controls easier to tap on mobile devices by increasing padding
+   and font size. */
+input[type="text"],
+input[type="date"],
+input[type="time"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  font-size: 1rem;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  box-sizing: border-box;
+}
+
+form div {
+  margin-bottom: 0.5rem;
+}
+
+form button[type="submit"],
+form button[type="button"] {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  margin-right: 0.5rem;
 }
 
 .error {
