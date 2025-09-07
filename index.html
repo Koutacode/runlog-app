@@ -12,14 +12,44 @@
   <header>
     <h1>運行管理アプリ</h1>
   </header>
+  <!-- Layout wrapper groups the navigation and main content together.  This allows
+       us to switch between vertical (mobile) and horizontal (tablet/foldable)
+       arrangements via CSS media queries without restructuring the DOM at
+       runtime. -->
+  <div class="layout">
   <nav>
-    <button onclick="showForm()">新規記録</button>
-    <button onclick="showList()">一覧</button>
-    <button onclick="showSummary()">集計</button>
-    <button onclick="exportCSV()">CSV出力</button>
+    <!-- Toggle button for one‑click start/stop recording.  On first tap this
+         records the current time as the start of a trip.  On the next tap
+         it captures the end time, saves the entry and returns to the list. -->
+    <!-- Buttons are enhanced with icons for quick recognition and a more intuitive UI.
+         Each button contains two spans: one for a simple emoji icon and one for the label. The
+         icon conveys the action at a glance, which is particularly helpful while driving.
+         The start/stop button has its own ID for the icon and label so that JavaScript can
+         dynamically update them. -->
+    <button id="toggleTripBtn" class="start" onclick="toggleTrip()">
+      <span class="icon" id="toggleIcon">▶️</span>
+      <span id="toggleLabel">運行開始</span>
+    </button>
+    <button onclick="showForm()">
+      <span class="icon">➕</span>
+      <span>新規記録</span>
+    </button>
+    <button onclick="showList()">
+      <span class="icon">📄</span>
+      <span>一覧</span>
+    </button>
+    <button onclick="showSummary()">
+      <span class="icon">📊</span>
+      <span>集計</span>
+    </button>
+    <button onclick="exportCSV()">
+      <span class="icon">📤</span>
+      <span>CSV出力</span>
+    </button>
   </nav>
   <main id="content">
     <!-- dynamic content -->
   </main>
+  </div>
 </body>
 </html>
