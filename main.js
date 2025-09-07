@@ -3,11 +3,18 @@
 // Array to store log entries
 let logs = [];
 
-// Keep track of the start time of a trip when using the one enable toggle.
+// Keep track of the start time of a trip when using the one‑click toggle.
 // When `currentTripStartTime` is non‑null the app is waiting for the user to
 // finish the trip.  This allows a driver to record a trip in two taps
 // without needing to manually enter times while driving.
 let currentTripStartTime = null;
+
+// Store any events recorded during the current trip.  Events capture a
+// timestamp, a location (resolved to an address when possible) and
+// optional fields such as fuel quantity and price.  This array is reset
+// each time a new trip is started and persisted into the log entry when
+// the trip ends.  When no trip is active this variable remains unused.
+let currentTripEvents = [];
 
 /**
  * Toggle between starting and ending a trip.  When no trip is currently
@@ -42,6 +49,10 @@ function toggleTrip() {
     const date = startDate.toISOString().substr(0, 10);
     const startTimeStr = startDate.toTimeString().substr(0, 5);
     const endTimeStr = endTime.toTimeString().substr(0, 5);
+    // Prompt for final odometer reading.  Allow blank if unknown.
+    const finalOdoStr = prompt('最終オドメーターを入力してください:');
+    const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
+    // Build a new log entry including any recorded events and the final odometer.
     const logEntry = {
       date,
       startTime: startTimeStr,
@@ -51,11 +62,14 @@ function toggleTrip() {
       end: '',
       distance: '',
       cost: '',
-      notes: ''
+      notes: '',
+      events: currentTripEvents.slice(),
+      finalOdo: finalOdo
     };
     logs.push(logEntry);
     saveLogs();
     currentTripStartTime = null;
+    currentTripEvents = [];
     // Reset button back to start state
     const icon = document.getElementById('toggleIcon');
     const label = document.getElementById('toggleLabel');
@@ -186,6 +200,8 @@ function submitLog(editIndex) {
     document.getElementById('formError').innerText = errors.join('\n');
     return;
   }
+  // Preserve event and final odometer data when editing an existing log.  New logs get empty arrays.
+  const existing = editIndex >= 0 ? logs[editIndex] : {};
   const logEntry = {
     date,
     startTime,
@@ -195,7 +211,9 @@ function submitLog(editIndex) {
     end,
     distance: isNaN(distance) ? '' : distance,
     cost: isNaN(cost) ? '' : cost,
-    notes
+    notes,
+    events: existing.events || [],
+    finalOdo: existing.finalOdo || ''
   };
   if (editIndex >= 0) {
     logs[editIndex] = logEntry;
@@ -286,15 +304,167 @@ function showSummary() {
   document.getElementById('content').innerHTML = html;
 }
 
+/**
+ * Record a generic event during an active trip.  This helper captures
+ * the current time and attempts to resolve the user’s location to a
+ * human‑readable address via the OpenStreetMap Nominatim API.  If
+ * geolocation or reverse geocoding fails, the location field will be
+ * left blank.  The recorded event is pushed into `currentTripEvents`.
+ *
+ * @param {string} type - A label describing the event (e.g., 荷積み, 荷卸し, 休憩)
+ */
+function recordEvent(type) {
+  // Require that a trip is currently in progress
+  if (!currentTripStartTime) {
+    alert('運行を開始してからイベントを記録してください。');
+    return;
+  }
+  // Construct basic event information
+  const eventTime = new Date();
+  const eventObj = {
+    type,
+    time: eventTime.toTimeString().substr(0, 5),
+    location: '',
+    fuelAmount: '',
+    fuelPrice: ''
+  };
+  // Helper to finalize and store the event
+  function finalize() {
+    currentTripEvents.push(eventObj);
+    alert(`${type} を記録しました。`);
+  }
+  // Attempt to obtain the current position
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        // Fetch a human‑readable address from Nominatim.  If the fetch fails
+        // we still record the event without a location.
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+          .then((response) => response.json())
+          .then((data) => {
+            if (data && data.display_name) {
+              eventObj.location = data.display_name;
+            }
+            finalize();
+          })
+          .catch(() => {
+            finalize();
+          });
+      },
+      () => {
+        finalize();
+      }
+    );
+  } else {
+    finalize();
+  }
+}
+
+/**
+ * Record a refueling event during an active trip.  This function prompts
+ * the driver for the amount of fuel added (in litres) and the price per
+ * litre.  Price is optional.  It then records the time and attempts to
+ * resolve the location similarly to `recordEvent()`.  The event is
+ * stored in `currentTripEvents` with the extra fields populated.
+ */
+function recordFuelEvent() {
+  if (!currentTripStartTime) {
+    alert('運行を開始してからイベントを記録してください。');
+    return;
+  }
+  // Prompt for fuel quantity
+  const amountStr = prompt('給油量(リットル)を入力してください:');
+  let fuelAmount = '';
+  if (amountStr) {
+    const amtNum = parseFloat(amountStr);
+    fuelAmount = isNaN(amtNum) ? '' : amtNum;
+  }
+  // Prompt for fuel price per litre (optional)
+  const priceStr = prompt('リッターあたりの値段(円)を入力してください(空白可):');
+  let fuelPrice = '';
+  if (priceStr) {
+    const priceNum = parseFloat(priceStr);
+    fuelPrice = isNaN(priceNum) ? '' : priceNum;
+  }
+  const type = '給油';
+  const eventTime = new Date();
+  const eventObj = {
+    type,
+    time: eventTime.toTimeString().substr(0, 5),
+    location: '',
+    fuelAmount: fuelAmount,
+    fuelPrice: fuelPrice
+  };
+  function finalize() {
+    currentTripEvents.push(eventObj);
+    alert(`${type} を記録しました。`);
+  }
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+          .then((response) => response.json())
+          .then((data) => {
+            if (data && data.display_name) {
+              eventObj.location = data.display_name;
+            }
+            finalize();
+          })
+          .catch(() => {
+            finalize();
+          });
+      },
+      () => {
+        finalize();
+      }
+    );
+  } else {
+    finalize();
+  }
+}
+
 // Export logs as CSV file
 function exportCSV() {
   if (logs.length === 0) {
     alert('エクスポートする記録がありません。');
     return;
   }
-  // Define CSV headers
-  const headers = ['日付', '開始時刻', '終了時刻', '目的', '出発地', '到着地', '距離(km)', '費用(円)', 'メモ'];
+  // Define CSV headers.  Additional columns for events and final odometer.
+  const headers = [
+    '日付',
+    '開始時刻',
+    '終了時刻',
+    '目的',
+    '出発地',
+    '到着地',
+    '距離(km)',
+    '費用(円)',
+    'メモ',
+    'イベント',
+    '最終オドメーター'
+  ];
   const rows = logs.map((log) => {
+    // Flatten events into a single string: time type (location) with optional fuel details
+    let eventsStr = '';
+    if (log.events && log.events.length) {
+      eventsStr = log.events
+        .map((ev) => {
+          let s = `${ev.time} ${ev.type}`;
+          if (ev.location) s += `(${ev.location})`;
+          if (ev.type === '給油') {
+            const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
+            const price = ev.fuelPrice !== '' ? `${ev.fuelPrice}円/L` : '';
+            const details = [amount, price].filter(Boolean).join(', ');
+            if (details) s += `:${details}`;
+          }
+          return s;
+        })
+        .join('; ');
+    }
     return [
       log.date,
       log.startTime,
@@ -304,7 +474,9 @@ function exportCSV() {
       log.end,
       log.distance,
       log.cost,
-      log.notes.replace(/\n/g, '\\n')
+      log.notes.replace(/\n/g, '\\n'),
+      eventsStr,
+      log.finalOdo || ''
     ].join(',');
   });
   const csvContent = [headers.join(','), ...rows].join('\n');
