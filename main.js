@@ -3,6 +3,73 @@
 // Array to store log entries
 let logs = [];
 
+// Keep track of the start time of a trip when using the one enable toggle.
+// When `currentTripStartTime` is non‑null the app is waiting for the user to
+// finish the trip.  This allows a driver to record a trip in two taps
+// without needing to manually enter times while driving.
+let currentTripStartTime = null;
+
+/**
+ * Toggle between starting and ending a trip.  When no trip is currently
+ * recording, pressing the button stores the current date/time as the start
+ * time and updates the button label to indicate the user should press again
+ * when the trip ends.  When pressed while a trip is recording, it will
+ * capture the end time, create a log entry with the captured times and
+ * minimal details, save it, and reset the state back to “start”.  The list
+ * view is shown after saving so the user can confirm the trip was
+ * recorded.  Drivers can edit additional fields such as purpose or
+ * distance later via the usual edit function.
+ */
+function toggleTrip() {
+  const btn = document.getElementById('toggleTripBtn');
+  if (!currentTripStartTime) {
+    // Begin a new trip: record start time and change button label/icon/color
+    currentTripStartTime = new Date();
+    // Update the button to indicate recording in progress
+    const icon = document.getElementById('toggleIcon');
+    const label = document.getElementById('toggleLabel');
+    if (icon) icon.textContent = '⏹';
+    if (label) label.textContent = '運行終了';
+    if (btn) {
+      btn.classList.remove('start');
+      btn.classList.add('stop');
+    }
+  } else {
+    // End the current trip and save it
+    const endTime = new Date();
+    const startDate = currentTripStartTime;
+    // Build a new log entry. Use ISO strings to extract date and time
+    const date = startDate.toISOString().substr(0, 10);
+    const startTimeStr = startDate.toTimeString().substr(0, 5);
+    const endTimeStr = endTime.toTimeString().substr(0, 5);
+    const logEntry = {
+      date,
+      startTime: startTimeStr,
+      endTime: endTimeStr,
+      purpose: '',
+      start: '',
+      end: '',
+      distance: '',
+      cost: '',
+      notes: ''
+    };
+    logs.push(logEntry);
+    saveLogs();
+    currentTripStartTime = null;
+    // Reset button back to start state
+    const icon = document.getElementById('toggleIcon');
+    const label = document.getElementById('toggleLabel');
+    if (icon) icon.textContent = '▶️';
+    if (label) label.textContent = '運行開始';
+    if (btn) {
+      btn.classList.remove('stop');
+      btn.classList.add('start');
+    }
+    // Show the list so the driver can quickly verify the entry
+    showList();
+  }
+}
+
 // Load logs from localStorage
 function loadLogs() {
   const data = localStorage.getItem('runlog_logs');
