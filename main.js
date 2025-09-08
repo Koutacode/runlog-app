@@ -1,3 +1,4 @@
+
 // main.js - client-side logic for the runlog app
 
 // Array to store log entries
@@ -227,7 +228,7 @@ function submitLog(editIndex) {
 // Display the list of logs
 function showList() {
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>記録がありません."新規記録"ボタンから追加してください。</p>';
+    document.getElementById('content').innerHTML = '<p>記録がありません。"新規記録"ボタンから追加してください。</p>';
     return;
   }
   let tableRows = logs
