@@ -1,9 +1,9 @@
-const cacheName = 'runlog-cache-v2';
+﻿const cacheName = 'runlog-cache-v5';
 const assetsToCache = [
   '.',
   'index.html',
   'styles.css',
-  'main.js',
+  'main.esc.js',
   'manifest.json'
 ];
 
@@ -34,3 +34,5 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+

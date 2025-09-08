@@ -1,75 +1,38 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>運行管理アプリ</title>
+  <title>Run Log</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css">
-  <script src="main.js" defer></script>
+  <script src="main.esc.js" defer></script>
+  <meta name="theme-color" content="#0066cc">
 </head>
 <body>
   <header>
-    <h1>運行管理アプリ</h1>
+    <h1>Run Log</h1>
   </header>
-  <!-- Layout wrapper groups the navigation and main content together.  This allows
-       us to switch between vertical (mobile) and horizontal (tablet/foldable)
-       arrangements via CSS media queries without restructuring the DOM at
-       runtime. -->
   <div class="layout">
-  <nav>
-    <!-- Toggle button for one‑click start/stop recording.  On first tap this
-         records the current time as the start of a trip.  On the next tap
-         it captures the end time, saves the entry and returns to the list. -->
-    <!-- Buttons are enhanced with icons for quick recognition and a more intuitive UI.
-         Each button contains two spans: one for a simple emoji icon and one for the label. The
-         icon conveys the action at a glance, which is particularly helpful while driving.
-         The start/stop button has its own ID for the icon and label so that JavaScript can
-         dynamically update them. -->
-    <button id="toggleTripBtn" class="start" onclick="toggleTrip()">
-      <span class="icon" id="toggleIcon">▶️</span>
-      <span id="toggleLabel">運行開始</span>
-    </button>
-    <button onclick="showForm()">
-      <span class="icon">➕</span>
-      <span>新規記録</span>
-    </button>
-    <button onclick="showList()">
-      <span class="icon">📄</span>
-      <span>一覧</span>
-    </button>
-    <button onclick="showSummary()">
-      <span class="icon">📊</span>
-      <span>集計</span>
-    </button>
-    <button onclick="exportCSV()">
-      <span class="icon">📤</span>
-      <span>CSV出力</span>
-    </button>
+    <nav>
+      <button id="toggleTripBtn" class="start" onclick="toggleTrip()">
+        <span id="toggleLabel">Start</span>
+      </button>
+      <button id="btnNewLog" onclick="showForm()">New Log</button>
+      <button id="btnList" onclick="showList()">List</button>
+      <button id="btnSummary" onclick="showSummary()">Summary</button>
+      <button id="btnExport" onclick="exportCSV()">Export CSV</button>
+      <button id="btnMaintenance" onclick="showMaintenanceList()">Maintenance</button>
 
-    <!-- Additional event buttons for quick one‑tap logging during a trip.  These buttons
-         record the current time and location (and optional details) into the
-         ongoing trip’s event list.  They only function while a trip is active. -->
-    <button onclick="recordEvent('荷積み')">
-      <span class="icon">📦</span>
-      <span>荷積み</span>
-    </button>
-    <button onclick="recordEvent('荷卸し')">
-      <span class="icon">📤</span>
-      <span>荷卸し</span>
-    </button>
-    <button onclick="recordFuelEvent()">
-      <span class="icon">⛽</span>
-      <span>給油</span>
-    </button>
-    <button onclick="recordEvent('休憩')">
-      <span class="icon">☕</span>
-      <span>休憩</span>
-    </button>
-  </nav>
-  <main id="content">
-    <!-- dynamic content -->
-  </main>
+      <button id="btnLoad" onclick="recordEvent('Load')">Load</button>
+      <button id="btnUnload" onclick="recordEvent('Unload')">Unload</button>
+      <button id="btnFuel" onclick="recordFuelEvent()">Fuel</button>
+      <button id="btnBreak" onclick="recordEvent('Break')">Break</button>
+    </nav>
+    <main id="content">
+      <!-- dynamic content -->
+    </main>
   </div>
 </body>
 </html>
+
