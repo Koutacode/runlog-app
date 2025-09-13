@@ -1,64 +1,129 @@
-﻿\ufeff// main.js - \u904b\u884c\u7ba1\u7406\u30a2\u30d7\u30ea\uff08\u65e5\u672c\u8a9eUI\uff09
+﻿// main.js - 運行管理アプリ（日本語UI）
 
-// \u8d70\u884c\u30ed\u30b0
+// 走行ログ
 let logs = [];
-// \u30e1\u30f3\u30c6\u30ca\u30f3\u30b9\u8a18\u9332
+// メンテナンス記録
 let maintenance = [];
+const maintenanceIntervals = {
+  'オイル交換': 3,
+  'タイヤ交換': 24,
+  '点検': 6,
+  '車検': 24,
+  'バッテリー交換': 36,
+  'ワイパー交換': 12
+};
 
-// \u30ef\u30f3\u30bf\u30c3\u30d7\u958b\u59cb/\u7d42\u4e86\u306e\u72b6\u614b
+// ワンタップ開始/終了の状態
 let currentTripStartTime = null;
 let currentTripEvents = [];
+let currentTripStartAddress = '';
 
 function toggleTrip() {
   const btn = document.getElementById('toggleTripBtn');
   if (!currentTripStartTime) {
     currentTripStartTime = new Date();
+    currentTripStartAddress = '';
+    const startTimeStr = currentTripStartTime.toTimeString().slice(0, 5);
     const label = document.getElementById('toggleLabel');
-    if (label) label.textContent = '\u904b\u884c\u7d42\u4e86';
+    if (label) label.textContent = '運行終了';
     if (btn) {
       btn.classList.remove('start');
       btn.classList.add('stop');
     }
+    function finalizeStart(addr) {
+      currentTripStartAddress = addr || '';
+      currentTripEvents.push({ type: '運航開始', time: startTimeStr, location: currentTripStartAddress, fuelAmount: '', fuelPrice: '' });
+    }
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+            .then((r) => r.json())
+            .then((d) => finalizeStart(d.display_name))
+            .catch(() => finalizeStart(''));
+        },
+        () => finalizeStart('')
+      );
+    } else {
+      finalizeStart('');
+    }
   } else {
     const endTime = new Date();
     const startDate = currentTripStartTime;
-    const date = startDate.toISOString().slice(0, 10);
+    const startDateStr = startDate.toISOString().slice(0, 10);
     const startTimeStr = startDate.toTimeString().slice(0, 5);
+    const endDateStr = endTime.toISOString().slice(0, 10);
     const endTimeStr = endTime.toTimeString().slice(0, 5);
-    const finalOdoStr = prompt('\u6700\u7d42\u30aa\u30c9\u30e1\u30fc\u30bf\u30fc\uff08\u4efb\u610f\uff09:');
+    const finalOdoStr = prompt('最終オドメーター（任意）:');
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
-    const logEntry = {
-      date,
-      startTime: startTimeStr,
-      endTime: endTimeStr,
-      purpose: '',
-      start: '',
-      end: '',
-      distance: '',
-      cost: '',
-      notes: '',
-      events: currentTripEvents.slice(),
-      finalOdo
-    };
-    logs.push(logEntry);
-    saveLogs();
-    currentTripStartTime = null;
-    currentTripEvents = [];
-    const label = document.getElementById('toggleLabel');
-    if (label) label.textContent = '\u904b\u884c\u958b\u59cb';
-    if (btn) {
-      btn.classList.remove('stop');
-      btn.classList.add('start');
+    function finalizeEnd(addr) {
+      const endAddr = addr || '';
+      currentTripEvents.push({ type: '運航終了', time: endTimeStr, location: endAddr, fuelAmount: '', fuelPrice: '' });
+      const logEntry = {
+        startDate: startDateStr,
+        startTime: startTimeStr,
+        endDate: endDateStr,
+        endTime: endTimeStr,
+        purpose: '',
+        start: currentTripStartAddress,
+        end: endAddr,
+        distance: '',
+        cost: '',
+        notes: '',
+        events: currentTripEvents.slice(),
+        finalOdo
+      };
+      logs.push(logEntry);
+      saveLogs();
+      currentTripStartTime = null;
+      currentTripEvents = [];
+      const label = document.getElementById('toggleLabel');
+      if (label) label.textContent = '運行開始';
+      if (btn) {
+        btn.classList.remove('stop');
+        btn.classList.add('start');
+      }
+      showList();
     }
-    showList();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+            .then((r) => r.json())
+            .then((d) => finalizeEnd(d.display_name))
+            .catch(() => finalizeEnd(''));
+        },
+        () => finalizeEnd('')
+      );
+    } else {
+      finalizeEnd('');
+    }
   }
 }
 
-// \u8d70\u884c\u30ed\u30b0 \u4fdd\u5b58/\u8aad\u8fbc
+// 走行ログ 保存/読込
 function loadLogs() {
   try {
     const data = localStorage.getItem('runlog_logs');
     logs = data ? JSON.parse(data) : [];
+    logs = logs.map((l) => ({
+      startDate: l.startDate || l.date || '',
+      startTime: l.startTime || '',
+      endDate: l.endDate || l.date || '',
+      endTime: l.endTime || '',
+      purpose: l.purpose || '',
+      start: l.start || '',
+      end: l.end || '',
+      distance: l.distance || '',
+      cost: l.cost || '',
+      notes: l.notes || '',
+      events: l.events || [],
+      finalOdo: l.finalOdo || ''
+    }));
   } catch (e) {
     console.error('Failed to parse stored logs', e);
     logs = [];
@@ -68,7 +133,7 @@ function saveLogs() {
   localStorage.setItem('runlog_logs', JSON.stringify(logs));
 }
 
-// \u30e1\u30f3\u30c6\u30ca\u30f3\u30b9 \u4fdd\u5b58/\u8aad\u8fbc
+// メンテナンス 保存/読込
 function loadMaintenance() {
   try {
     const data = localStorage.getItem('runlog_maintenance');
@@ -82,11 +147,41 @@ function saveMaintenance() {
   localStorage.setItem('runlog_maintenance', JSON.stringify(maintenance));
 }
 
-// \u8d70\u884c\u30ed\u30b0 \u30d5\u30a9\u30fc\u30e0
+function getNextMaintenanceDates() {
+  const latest = {};
+  maintenance.forEach((m) => {
+    if (!latest[m.type] || new Date(latest[m.type]) < new Date(m.date)) {
+      latest[m.type] = m.date;
+    }
+  });
+  const result = {};
+  Object.keys(maintenanceIntervals).forEach((type) => {
+    const last = latest[type];
+    if (last) {
+      const d = new Date(last);
+      d.setMonth(d.getMonth() + maintenanceIntervals[type]);
+      result[type] = d.toISOString().slice(0, 10);
+    } else {
+      result[type] = '未記録';
+    }
+  });
+  return result;
+}
+
+function maintenanceRecommendationsHTML() {
+  const next = getNextMaintenanceDates();
+  const items = Object.entries(next)
+    .map(([type, date]) => `<li>${type}: ${date}</li>`)
+    .join('');
+  return `<h3>次回メンテナンス目安</h3><ul>${items}</ul>`;
+}
+
+// 走行ログ フォーム
 function showForm(editIndex = -1) {
   const init = {
-    date: '',
+    startDate: '',
     startTime: '',
+    endDate: '',
     endTime: '',
     purpose: '',
     start: '',
@@ -99,50 +194,55 @@ function showForm(editIndex = -1) {
   if (editIndex >= 0) {
     log = { ...logs[editIndex] };
   } else {
-    log.date = new Date().toISOString().slice(0, 10);
+    log.startDate = new Date().toISOString().slice(0, 10);
+    log.endDate = log.startDate;
   }
   const html = `
-    <h2>${editIndex >= 0 ? '\u8a18\u9332\u3092\u7de8\u96c6' : '\u65b0\u898f\u8a18\u9332'}</h2>
+    <h2>${editIndex >= 0 ? '記録を編集' : '新規記録'}</h2>
     <form id="logForm">
       <div>
-        <label for="date">\u65e5\u4ed8:</label>
-        <input type="date" id="date" name="date" value="${log.date}">
+        <label for="startDate">開始日:</label>
+        <input type="date" id="startDate" value="${log.startDate}">
       </div>
       <div>
-        <label for="startTime">\u958b\u59cb\u6642\u523b:</label>
-        <input type="time" id="startTime" name="startTime" value="${log.startTime || ''}">
+        <label for="startTime">開始時刻:</label>
+        <input type="time" id="startTime" value="${log.startTime || ''}">
       </div>
       <div>
-        <label for="endTime">\u7d42\u4e86\u6642\u523b:</label>
-        <input type="time" id="endTime" name="endTime" value="${log.endTime || ''}">
+        <label for="endDate">終了日:</label>
+        <input type="date" id="endDate" value="${log.endDate || ''}">
       </div>
       <div>
-        <label for="purpose">\u76ee\u7684:</label>
-        <input type="text" id="purpose" name="purpose" value="${log.purpose || ''}" placeholder="\u8377\u7269\u30fb\u7528\u9014\u306a\u3069">
+        <label for="endTime">終了時刻:</label>
+        <input type="time" id="endTime" value="${log.endTime || ''}">
       </div>
       <div>
-        <label for="start">\u51fa\u767a\u5730:</label>
-        <input type="text" id="start" name="start" value="${log.start || ''}">
+        <label for="purpose">目的:</label>
+        <input type="text" id="purpose" value="${log.purpose || ''}" placeholder="荷物・用途など">
       </div>
       <div>
-        <label for="end">\u5230\u7740\u5730:</label>
-        <input type="text" id="end" name="end" value="${log.end || ''}">
+        <label for="start">出発地:</label>
+        <input type="text" id="start" value="${log.start || ''}">
       </div>
       <div>
-        <label for="distance">\u8ddd\u96e2 (km):</label>
-        <input type="number" step="0.1" id="distance" name="distance" value="${log.distance || ''}">
+        <label for="end">到着地:</label>
+        <input type="text" id="end" value="${log.end || ''}">
       </div>
       <div>
-        <label for="cost">\u8cbb\u7528 (\u5186):</label>
-        <input type="number" step="0.1" id="cost" name="cost" value="${log.cost || ''}">
+        <label for="distance">距離 (km):</label>
+        <input type="number" step="0.1" id="distance" value="${log.distance || ''}">
       </div>
       <div>
-        <label for="notes">\u30e1\u30e2:</label>
-        <textarea id="notes" name="notes" rows="3">${log.notes || ''}</textarea>
+        <label for="cost">費用 (円):</label>
+        <input type="number" step="0.1" id="cost" value="${log.cost || ''}">
       </div>
       <div>
-        <button type="submit">${editIndex >= 0 ? '\u4fdd\u5b58' : '\u8ffd\u52a0'}</button>
-        <button type="button" onclick="showList()">\u30ad\u30e3\u30f3\u30bb\u30eb</button>
+        <label for="notes">メモ:</label>
+        <textarea id="notes" rows="3">${log.notes || ''}</textarea>
+      </div>
+      <div>
+        <button type="submit">${editIndex >= 0 ? '保存' : '追加'}</button>
+        <button type="button" onclick="showList()">キャンセル</button>
       </div>
       <div id="formError" class="error"></div>
     </form>
@@ -155,8 +255,9 @@ function showForm(editIndex = -1) {
 }
 
 function submitLog(editIndex) {
-  const date = document.getElementById('date').value;
+  const startDate = document.getElementById('startDate').value;
   const startTime = document.getElementById('startTime').value;
+  const endDate = document.getElementById('endDate').value;
   const endTime = document.getElementById('endTime').value;
   const purpose = document.getElementById('purpose').value.trim();
   const start = document.getElementById('start').value.trim();
@@ -165,20 +266,24 @@ function submitLog(editIndex) {
   const cost = parseFloat(document.getElementById('cost').value);
   const notes = document.getElementById('notes').value.trim();
   const errors = [];
-  if (!date) errors.push('\u65e5\u4ed8\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-  if (!startTime) errors.push('\u958b\u59cb\u6642\u523b\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-  if (!endTime) errors.push('\u7d42\u4e86\u6642\u523b\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-  if (!isNaN(distance) && distance < 0) errors.push('\u8ddd\u96e2\u306f0\u4ee5\u4e0a\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-  if (!isNaN(cost) && cost < 0) errors.push('\u8cbb\u7528\u306f0\u4ee5\u4e0a\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-  if (startTime && endTime && startTime > endTime) errors.push('\u958b\u59cb\u6642\u523b\u306f\u7d42\u4e86\u6642\u523b\u3088\u308a\u524d\u3067\u306a\u3051\u308c\u3070\u306a\u308a\u307e\u305b\u3093\u3002');
+  if (!startDate) errors.push('開始日を入力してください。');
+  if (!startTime) errors.push('開始時刻を入力してください。');
+  if (!endDate) errors.push('終了日を入力してください。');
+  if (!endTime) errors.push('終了時刻を入力してください。');
+  if (!isNaN(distance) && distance < 0) errors.push('距離は0以上で入力してください。');
+  if (!isNaN(cost) && cost < 0) errors.push('費用は0以上で入力してください。');
+  const startDateTime = new Date(`${startDate}T${startTime}`);
+  const endDateTime = new Date(`${endDate}T${endTime}`);
+  if (startDateTime > endDateTime) errors.push('開始日時は終了日時より前でなければなりません。');
   if (errors.length > 0) {
     document.getElementById('formError').innerText = errors.join('\n');
     return;
   }
   const existing = editIndex >= 0 ? logs[editIndex] : {};
   const logEntry = {
-    date,
+    startDate,
     startTime,
+    endDate,
     endTime,
     purpose,
     start,
@@ -196,14 +301,15 @@ function submitLog(editIndex) {
 
 function showList() {
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002\u300c\u65b0\u898f\u8a18\u9332\u300d\u30dc\u30bf\u30f3\u304b\u3089\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044\u3002</p>';
+    document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
     return;
   }
   const tableRows = logs
     .map((log, index) => `
       <tr>
-        <td>${log.date}</td>
+        <td>${log.startDate}</td>
         <td>${log.startTime}</td>
+        <td>${log.endDate}</td>
         <td>${log.endTime}</td>
         <td>${log.purpose}</td>
         <td>${log.start}</td>
@@ -211,26 +317,27 @@ function showList() {
         <td>${log.distance}</td>
         <td>${log.cost}</td>
         <td>
-          <button onclick=\"showForm(${index})\">\u7de8\u96c6</button>
-          <button onclick=\"deleteLog(${index})\">\u524a\u9664</button>
+          <button onclick=\"showForm(${index})\">編集</button>
+          <button onclick=\"deleteLog(${index})\">削除</button>
         </td>
       </tr>
     `)
     .join('');
   const html = `
-    <h2>\u8a18\u9332\u4e00\u89a7</h2>
+    <h2>記録一覧</h2>
     <table>
       <thead>
         <tr>
-          <th>\u65e5\u4ed8</th>
-          <th>\u958b\u59cb</th>
-          <th>\u7d42\u4e86</th>
-          <th>\u76ee\u7684</th>
-          <th>\u51fa\u767a\u5730</th>
-          <th>\u5230\u7740\u5730</th>
-          <th>\u8ddd\u96e2(km)</th>
-          <th>\u8cbb\u7528(\u5186)</th>
-          <th>\u64cd\u4f5c</th>
+          <th>開始日</th>
+          <th>開始時刻</th>
+          <th>終了日</th>
+          <th>終了時刻</th>
+          <th>目的</th>
+          <th>出発地</th>
+          <th>到着地</th>
+          <th>距離(km)</th>
+          <th>費用(円)</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -242,7 +349,7 @@ function showList() {
 }
 
 function deleteLog(index) {
-  if (confirm('\u3053\u306e\u8a18\u9332\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f')) {
+  if (confirm('この記録を削除しますか？')) {
     logs.splice(index, 1);
     saveLogs();
     showList();
@@ -251,7 +358,7 @@ function deleteLog(index) {
 
 function showSummary() {
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002</p>';
+    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
     return;
   }
   let totalDistance = 0;
@@ -261,17 +368,45 @@ function showSummary() {
     if (log.cost !== '' && !isNaN(Number(log.cost))) totalCost += Number(log.cost);
   });
   const html = `
-    <h2>\u96c6\u8a08</h2>
-    <p>\u8a18\u9332\u4ef6\u6570: ${logs.length}</p>
-    <p>\u7dcf\u8ddd\u96e2: ${totalDistance.toFixed(1)} km</p>
-    <p>\u7dcf\u8cbb\u7528: ${totalCost.toFixed(0)} \u5186</p>
+    <h2>集計</h2>
+    <p>記録件数: ${logs.length}</p>
+    <p>総距離: ${totalDistance.toFixed(1)} km</p>
+    <p>総費用: ${totalCost.toFixed(0)} 円</p>
   `;
   document.getElementById('content').innerHTML = html;
 }
 
+function showDailyReport() {
+  if (logs.length === 0) {
+    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
+    return;
+  }
+  const sections = logs
+    .map((log) => {
+      const events = (log.events || [])
+        .map((ev) => {
+          let s = `${ev.time} ${ev.type}`;
+          if (ev.location) s += `(${ev.location})`;
+          return `<li>${s}</li>`;
+        })
+        .join('');
+      return `
+        <section class="report">
+          <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
+          <p>出発地: ${log.start || ''}</p>
+          <p>到着地: ${log.end || ''}</p>
+          <p>目的: ${log.purpose || ''}</p>
+          <ul>${events}</ul>
+        </section>
+      `;
+    })
+    .join('');
+  document.getElementById('content').innerHTML = `<h2>日報</h2>${sections}`;
+}
+
 function recordEvent(type) {
   if (!currentTripStartTime) {
-    alert('\u904b\u884c\u3092\u958b\u59cb\u3057\u3066\u304b\u3089\u30a4\u30d9\u30f3\u30c8\u3092\u8a18\u9332\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+    alert('運行を開始してからイベントを記録してください。');
     return;
   }
   const eventTime = new Date();
@@ -283,11 +418,11 @@ function recordEvent(type) {
     fuelPrice: ''
   };
   function finalize() {
-    // UI\u30dc\u30bf\u30f3\u306f\u82f1\u8a9e\uff08Load/Unload/Break\uff09\u304b\u3089\u547c\u3070\u308c\u308b\u53ef\u80fd\u6027\u304c\u3042\u308b\u306e\u3067\u65e5\u672c\u8a9e\u30e9\u30d9\u30eb\u306b\u5909\u63db
-    const map = { 'Load': '\u8377\u7a4d\u307f', 'Unload': '\u8377\u5378\u3057', 'Break': '\u4f11\u61a9' };
+    // UIボタンは英語で呼ばれる可能性があるので日本語ラベルに変換
+    const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
     eventObj.type = map[type] || type;
     currentTripEvents.push(eventObj);
-    alert(`${eventObj.type} \u3092\u8a18\u9332\u3057\u307e\u3057\u305f\u3002`);
+    alert(`${eventObj.type} を記録しました。`);
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -313,22 +448,22 @@ function recordEvent(type) {
 
 function recordFuelEvent() {
   if (!currentTripStartTime) {
-    alert('\u904b\u884c\u3092\u958b\u59cb\u3057\u3066\u304b\u3089\u30a4\u30d9\u30f3\u30c8\u3092\u8a18\u9332\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+    alert('運行を開始してからイベントを記録してください。');
     return;
   }
-  const amountStr = prompt('\u7d66\u6cb9\u91cf\uff08L\uff09:');
+  const amountStr = prompt('給油量（L）:');
   let fuelAmount = '';
   if (amountStr) {
     const amtNum = parseFloat(amountStr);
     fuelAmount = isNaN(amtNum) ? '' : amtNum;
   }
-  const priceStr = prompt('1\u30ea\u30c3\u30c8\u30eb\u3042\u305f\u308a\u306e\u5358\u4fa1\uff08\u5186\u30fb\u4efb\u610f\uff09:');
+  const priceStr = prompt('1リットルあたりの単価（円・任意）:');
   let fuelPrice = '';
   if (priceStr) {
     const priceNum = parseFloat(priceStr);
     fuelPrice = isNaN(priceNum) ? '' : priceNum;
   }
-  const type = '\u7d66\u6cb9';
+  const type = '給油';
   const eventTime = new Date();
   const eventObj = {
     type,
@@ -339,7 +474,7 @@ function recordFuelEvent() {
   };
   function finalize() {
     currentTripEvents.push(eventObj);
-    alert(`${type} \u3092\u8a18\u9332\u3057\u307e\u3057\u305f\u3002`);
+    alert(`${type} を記録しました。`);
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -361,12 +496,17 @@ function recordFuelEvent() {
   }
 }
 
+function csvEscape(value) {
+  const s = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 function exportCSV() {
   if (logs.length === 0) {
-    alert('\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u3059\u308b\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002');
+    alert('エクスポートする記録がありません。');
     return;
   }
-  const headers = ['\u65e5\u4ed8','\u958b\u59cb','\u7d42\u4e86','\u76ee\u7684','\u51fa\u767a\u5730','\u5230\u7740\u5730','\u8ddd\u96e2(km)','\u8cbb\u7528(\u5186)','\u30e1\u30e2','\u30a4\u30d9\u30f3\u30c8','\u6700\u7d42\u30aa\u30c9\u30e1\u30fc\u30bf\u30fc'];
+  const headers = ['開始日','開始時刻','終了日','終了時刻','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント','最終オドメーター'];
   const rows = logs.map((log) => {
     let eventsStr = '';
     if (log.events && log.events.length) {
@@ -374,9 +514,9 @@ function exportCSV() {
         .map((ev) => {
           let s = `${ev.time} ${ev.type}`;
           if (ev.location) s += `(${ev.location})`;
-          if (ev.type === '\u7d66\u6cb9') {
+          if (ev.type === '給油') {
             const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
-            const price = ev.fuelPrice !== '' ? `${ev.fuelPrice}\u5186/L` : '';
+            const price = ev.fuelPrice !== '' ? `${ev.fuelPrice}円/L` : '';
             const details = [amount, price].filter(Boolean).join(', ');
             if (details) s += `:${details}`;
           }
@@ -385,20 +525,21 @@ function exportCSV() {
         .join('; ');
     }
     return [
-      log.date,
-      log.startTime,
-      log.endTime,
-      log.purpose,
-      log.start,
-      log.end,
-      log.distance,
-      log.cost,
-      String(log.notes || '').replace(/\n/g, '\\n'),
-      eventsStr,
-      log.finalOdo || ''
+      csvEscape(log.startDate),
+      csvEscape(log.startTime),
+      csvEscape(log.endDate),
+      csvEscape(log.endTime),
+      csvEscape(log.purpose),
+      csvEscape(log.start),
+      csvEscape(log.end),
+      csvEscape(log.distance),
+      csvEscape(log.cost),
+      csvEscape(log.notes || ''),
+      csvEscape(eventsStr),
+      csvEscape(log.finalOdo || '')
     ].join(',');
   });
-  const csvContent = [headers.join(','), ...rows].join('\n');
+  const csvContent = [headers.join(','), ...rows].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -411,13 +552,13 @@ function exportCSV() {
   URL.revokeObjectURL(url);
 }
 
-// \u30e1\u30f3\u30c6\u30ca\u30f3\u30b9
+// メンテナンス
 function showMaintenanceList() {
   if (maintenance.length === 0) {
     document.getElementById('content').innerHTML = `
-      <h2>\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9</h2>
-      <p>\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002\u300c\u65b0\u898f\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9\u300d\u304b\u3089\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044\u3002</p>
-      <button onclick=\"showMaintenanceForm()\">\u65b0\u898f\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9</button>
+      <h2>メンテナンス</h2>
+      <p>記録がありません。「新規メンテナンス」から追加してください。</p>
+      <button onclick=\"showMaintenanceForm()\">新規メンテナンス</button>
     `;
     return;
   }
@@ -430,72 +571,73 @@ function showMaintenanceList() {
         <td>${m.cost}</td>
         <td>${m.notes || ''}</td>
         <td>
-          <button onclick=\"showMaintenanceForm(${i})\">\u7de8\u96c6</button>
-          <button onclick=\"deleteMaintenance(${i})\">\u524a\u9664</button>
+          <button onclick=\"showMaintenanceForm(${i})\">編集</button>
+          <button onclick=\"deleteMaintenance(${i})\">削除</button>
         </td>
       </tr>
     `)
     .join('');
   const html = `
-    <h2>\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9</h2>
+    <h2>メンテナンス</h2>
     <div style="margin: 0 0 0.5rem 0;">
-      <button onclick=\"showMaintenanceForm()\">\u65b0\u898f\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9</button>
-      <button onclick=\"exportMaintenanceCSV()\">CSV\u51fa\u529b</button>
+      <button onclick=\"showMaintenanceForm()\">新規メンテナンス</button>
+      <button onclick=\"exportMaintenanceCSV()\">CSV出力</button>
     </div>
     <table>
       <thead>
         <tr>
-          <th>\u65e5\u4ed8</th>
-          <th>\u5185\u5bb9</th>
-          <th>\u30aa\u30c9\u30e1\u30fc\u30bf\u30fc</th>
-          <th>\u8cbb\u7528(\u5186)</th>
-          <th>\u30e1\u30e2</th>
-          <th>\u64cd\u4f5c</th>
+          <th>日付</th>
+          <th>内容</th>
+          <th>オドメーター</th>
+          <th>費用(円)</th>
+          <th>メモ</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
+    ${maintenanceRecommendationsHTML()}
   `;
   document.getElementById('content').innerHTML = html;
 }
 
 function showMaintenanceForm(editIndex = -1) {
-  const init = { date: new Date().toISOString().slice(0, 10), type: '\u30aa\u30a4\u30eb\u4ea4\u63db', odometer: '', cost: '', notes: '' };
+  const init = { date: new Date().toISOString().slice(0, 10), type: 'オイル交換', odometer: '', cost: '', notes: '' };
   const m = editIndex >= 0 ? { ...maintenance[editIndex] } : init;
   const html = `
-    <h2>${editIndex >= 0 ? '\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9\u7de8\u96c6' : '\u65b0\u898f\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9'}</h2>
+    <h2>${editIndex >= 0 ? 'メンテナンス編集' : '新規メンテナンス'}</h2>
     <form id=\"mntForm\">
       <div>
-        <label for=\"mDate\">\u65e5\u4ed8:</label>
+        <label for=\"mDate\">日付:</label>
         <input type=\"date\" id=\"mDate\" value=\"${m.date}\">
       </div>
       <div>
-        <label for=\"mType\">\u5185\u5bb9:</label>
+        <label for=\"mType\">内容:</label>
         <select id=\"mType\">
-          <option${m.type === '\u30aa\u30a4\u30eb\u4ea4\u63db' ? ' selected' : ''}>\u30aa\u30a4\u30eb\u4ea4\u63db</option>
-          <option${m.type === '\u30bf\u30a4\u30e4\u4ea4\u63db' ? ' selected' : ''}>\u30bf\u30a4\u30e4\u4ea4\u63db</option>
-          <option${m.type === '\u70b9\u691c' ? ' selected' : ''}>\u70b9\u691c</option>
-          <option${m.type === '\u8eca\u691c' ? ' selected' : ''}>\u8eca\u691c</option>
-          <option${m.type === '\u30d0\u30c3\u30c6\u30ea\u30fc\u4ea4\u63db' ? ' selected' : ''}>\u30d0\u30c3\u30c6\u30ea\u30fc\u4ea4\u63db</option>
-          <option${m.type === '\u30ef\u30a4\u30d1\u30fc\u4ea4\u63db' ? ' selected' : ''}>\u30ef\u30a4\u30d1\u30fc\u4ea4\u63db</option>
-          <option${m.type && !['\u30aa\u30a4\u30eb\u4ea4\u63db','\u30bf\u30a4\u30e4\u4ea4\u63db','\u70b9\u691c','\u8eca\u691c','\u30d0\u30c3\u30c6\u30ea\u30fc\u4ea4\u63db','\u30ef\u30a4\u30d1\u30fc\u4ea4\u63db'].includes(m.type) ? ' selected' : ''}>\u305d\u306e\u4ed6</option>
+          <option${m.type === 'オイル交換' ? ' selected' : ''}>オイル交換</option>
+          <option${m.type === 'タイヤ交換' ? ' selected' : ''}>タイヤ交換</option>
+          <option${m.type === '点検' ? ' selected' : ''}>点検</option>
+          <option${m.type === '車検' ? ' selected' : ''}>車検</option>
+          <option${m.type === 'バッテリー交換' ? ' selected' : ''}>バッテリー交換</option>
+          <option${m.type === 'ワイパー交換' ? ' selected' : ''}>ワイパー交換</option>
+          <option${m.type && !['オイル交換','タイヤ交換','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
         </select>
       </div>
       <div>
-        <label for=\"mOdo\">\u30aa\u30c9\u30e1\u30fc\u30bf\u30fc:</label>
+        <label for=\"mOdo\">オドメーター:</label>
         <input type=\"number\" id=\"mOdo\" value=\"${m.odometer}\">
       </div>
       <div>
-        <label for=\"mCost\">\u8cbb\u7528(\u5186):</label>
+        <label for=\"mCost\">費用(円):</label>
         <input type=\"number\" id=\"mCost\" value=\"${m.cost}\">
       </div>
       <div>
-        <label for=\"mNotes\">\u30e1\u30e2:</label>
+        <label for=\"mNotes\">メモ:</label>
         <textarea id=\"mNotes\" rows=\"3\">${m.notes || ''}</textarea>
       </div>
       <div>
-        <button type=\"submit\">${editIndex >= 0 ? '\u4fdd\u5b58' : '\u8ffd\u52a0'}</button>
-        <button type=\"button\" onclick=\"showMaintenanceList()\">\u30ad\u30e3\u30f3\u30bb\u30eb</button>
+        <button type=\"submit\">${editIndex >= 0 ? '保存' : '追加'}</button>
+        <button type=\"button\" onclick=\"showMaintenanceList()\">キャンセル</button>
       </div>
       <div id=\"mntError\" class=\"error\"></div>
     </form>
@@ -514,11 +656,11 @@ function submitMaintenance(editIndex) {
   const costVal = document.getElementById('mCost').value;
   const notes = document.getElementById('mNotes').value.trim();
   const errors = [];
-  if (!date) errors.push('\u65e5\u4ed8\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+  if (!date) errors.push('日付を入力してください。');
   const odometer = odometerVal === '' ? '' : Number(odometerVal);
   const cost = costVal === '' ? '' : Number(costVal);
-  if (odometer !== '' && (isNaN(odometer) || odometer < 0)) errors.push('\u30aa\u30c9\u30e1\u30fc\u30bf\u30fc\u306f0\u4ee5\u4e0a\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-  if (cost !== '' && (isNaN(cost) || cost < 0)) errors.push('\u8cbb\u7528\u306f0\u4ee5\u4e0a\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+  if (odometer !== '' && (isNaN(odometer) || odometer < 0)) errors.push('オドメーターは0以上で入力してください。');
+  if (cost !== '' && (isNaN(cost) || cost < 0)) errors.push('費用は0以上で入力してください。');
   if (errors.length) {
     document.getElementById('mntError').innerText = errors.join('\n');
     return;
@@ -530,7 +672,7 @@ function submitMaintenance(editIndex) {
 }
 
 function deleteMaintenance(index) {
-  if (confirm('\u3053\u306e\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9\u8a18\u9332\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f')) {
+  if (confirm('このメンテナンス記録を削除しますか？')) {
     maintenance.splice(index, 1);
     saveMaintenance();
     showMaintenanceList();
@@ -539,18 +681,18 @@ function deleteMaintenance(index) {
 
 function exportMaintenanceCSV() {
   if (maintenance.length === 0) {
-    alert('\u30a8\u30af\u30b9\u30dd\u30fc\u30c8\u3059\u308b\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9\u8a18\u9332\u304c\u3042\u308a\u307e\u305b\u3093\u3002');
+    alert('エクスポートするメンテナンス記録がありません。');
     return;
   }
-  const headers = ['\u65e5\u4ed8','\u5185\u5bb9','\u30aa\u30c9\u30e1\u30fc\u30bf\u30fc','\u8cbb\u7528(\u5186)','\u30e1\u30e2'];
+  const headers = ['日付','内容','オドメーター','費用(円)','メモ'];
   const rows = maintenance.map((m) => [
-    m.date,
-    m.type,
-    m.odometer,
-    m.cost,
-    String(m.notes || '').replace(/\n/g, '\\n')
+    csvEscape(m.date),
+    csvEscape(m.type),
+    csvEscape(m.odometer),
+    csvEscape(m.cost),
+    csvEscape(m.notes || '')
   ].join(','));
-  const csvContent = [headers.join(','), ...rows].join('\n');
+  const csvContent = [headers.join(','), ...rows].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -563,7 +705,7 @@ function exportMaintenanceCSV() {
   URL.revokeObjectURL(url);
 }
 
-// Service Worker \u767b\u9332
+// Service Worker 登録
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('service-worker.js').catch((err) => {
@@ -572,7 +714,7 @@ function registerServiceWorker() {
   }
 }
 
-// \u8d77\u52d5\u6642\u51e6\u7406
+// 起動時処理
 window.addEventListener('load', () => {
   loadLogs();
   loadMaintenance();
@@ -581,20 +723,22 @@ window.addEventListener('load', () => {
   registerServiceWorker();
 });
 
-// \u753b\u9762\u306e\u56fa\u5b9a\u30e9\u30d9\u30eb\uff08\u30ca\u30d3\u7b49\uff09\u3092\u65e5\u672c\u8a9e\u306b
+// 画面の固定ラベル（ナビ等）を日本語に
 function applyJapaneseLabels() {
-  document.title = '\u904b\u884c\u7ba1\u7406\u30a2\u30d7\u30ea';
+  document.title = 'ギャラクシーズホールド運行管理';
   const h1 = document.querySelector('header h1');
-  if (h1) h1.textContent = '\u904b\u884c\u7ba1\u7406\u30a2\u30d7\u30ea';
+  if (h1) h1.textContent = 'ギャラクシーズホールド運行管理';
   const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-  setText('toggleLabel', '\u904b\u884c\u958b\u59cb');
-  setText('btnNewLog', '\u65b0\u898f\u8a18\u9332');
-  setText('btnList', '\u4e00\u89a7');
-  setText('btnSummary', '\u96c6\u8a08');
-  setText('btnExport', 'CSV\u51fa\u529b');
-  setText('btnMaintenance', '\u30e1\u30f3\u30c6\u30ca\u30f3\u30b9');
-  setText('btnLoad', '\u8377\u7a4d\u307f');
-  setText('btnUnload', '\u8377\u5378\u3057');
-  setText('btnFuel', '\u7d66\u6cb9');
-  setText('btnBreak', '\u4f11\u61a9');
+  setText('toggleLabel', '運行開始');
+  setText('btnNewLog', '新規記録');
+  setText('btnList', '一覧');
+  setText('btnSummary', '集計');
+  setText('btnDaily', '日報');
+  setText('btnExport', 'CSV出力');
+  setText('btnMaintenance', '整備記録');
+  setText('btnLoad', '積み込み');
+  setText('btnUnload', '荷下ろし');
+  setText('btnFuel', '給油');
+  setText('btnBreak', '休憩');
+  setText('btnRest', '休息');
 }
