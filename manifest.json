@@ -1,7 +1,7 @@
 {
-  "name": "運行管理アプリ",
-  "short_name": "運行管理",
-  "description": "個人用日報・運行管理アプリ",
+  "name": "ギャラクシーズホールド運行管理",
+  "short_name": "ギャラクシー運行",
+  "description": "ギャラクシーズホールド向け運行管理アプリ",
   "start_url": ".",
   "display": "standalone",
   "theme_color": "#0066cc",
