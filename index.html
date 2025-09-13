@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ギャラクシーズホールド運行管理</title>
+  <title>Run Log</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css">
   <script src="main.esc.js" defer></script>
@@ -11,25 +11,23 @@
 </head>
 <body>
   <header>
-    <h1>ギャラクシーズホールド運行管理</h1>
+    <h1>Run Log</h1>
   </header>
   <div class="layout">
     <nav>
       <button id="toggleTripBtn" class="start" onclick="toggleTrip()">
-        <span id="toggleLabel">運行開始</span>
+        <span id="toggleLabel">Start</span>
       </button>
-      <button id="btnNewLog" onclick="showForm()">新規記録</button>
-      <button id="btnList" onclick="showList()">一覧</button>
-      <button id="btnSummary" onclick="showSummary()">集計</button>
-      <button id="btnDaily" onclick="showDailyReport()">日報</button>
-      <button id="btnExport" onclick="exportCSV()">CSV出力</button>
-      <button id="btnMaintenance" onclick="showMaintenanceList()">整備記録</button>
+      <button id="btnNewLog" onclick="showForm()">New Log</button>
+      <button id="btnList" onclick="showList()">List</button>
+      <button id="btnSummary" onclick="showSummary()">Summary</button>
+      <button id="btnExport" onclick="exportCSV()">Export CSV</button>
+      <button id="btnMaintenance" onclick="showMaintenanceList()">Maintenance</button>
 
-      <button id="btnLoad" onclick="recordEvent('Load')">積み込み</button>
-      <button id="btnUnload" onclick="recordEvent('Unload')">荷下ろし</button>
-      <button id="btnFuel" onclick="recordFuelEvent()">給油</button>
-      <button id="btnBreak" onclick="recordEvent('Break')">休憩</button>
-      <button id="btnRest" onclick="recordEvent('Rest')">休息</button>
+      <button id="btnLoad" onclick="recordEvent('Load')">Load</button>
+      <button id="btnUnload" onclick="recordEvent('Unload')">Unload</button>
+      <button id="btnFuel" onclick="recordFuelEvent()">Fuel</button>
+      <button id="btnBreak" onclick="recordEvent('Break')">Break</button>
     </nav>
     <main id="content">
       <!-- dynamic content -->
