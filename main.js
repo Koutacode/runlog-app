@@ -17,12 +17,85 @@ const maintenanceIntervals = {
 let currentTripStartTime = null;
 let currentTripEvents = [];
 let currentTripStartAddress = '';
+let currentTripStartOdo = '';
+
+const eventButtonMap = {
+  '積み込み': { id: 'btnLoad', start: '積み込み', end: '積み込み終了' },
+  '荷下ろし': { id: 'btnUnload', start: '荷下ろし', end: '荷下ろし終了' },
+  '休憩': { id: 'btnBreak', start: '休憩', end: '休憩終了' },
+  '休息': { id: 'btnRest', start: '休息', end: '休息終了' }
+};
+
+function updateEventButton(jpType) {
+  const info = eventButtonMap[jpType];
+  if (!info) return;
+  const btn = document.getElementById(info.id);
+  if (!btn) return;
+  const ongoing = currentTripEvents.some((ev) => ev.type === jpType && !ev.endTime);
+  btn.textContent = ongoing ? info.end : info.start;
+}
+
+function updateAllEventButtons() {
+  Object.keys(eventButtonMap).forEach(updateEventButton);
+}
+
+function saveCurrentTrip() {
+  if (currentTripStartTime) {
+    const data = {
+      startTime: currentTripStartTime.toISOString(),
+      events: currentTripEvents,
+      startAddress: currentTripStartAddress,
+      startOdo: currentTripStartOdo
+    };
+    localStorage.setItem('runlog_current_trip', JSON.stringify(data));
+  } else {
+    localStorage.removeItem('runlog_current_trip');
+  }
+}
+
+function loadCurrentTrip() {
+  try {
+    const dataStr = localStorage.getItem('runlog_current_trip');
+    if (!dataStr) return;
+    const data = JSON.parse(dataStr);
+    if (data.startTime) currentTripStartTime = new Date(data.startTime);
+    currentTripEvents = data.events || [];
+    currentTripStartAddress = data.startAddress || '';
+    currentTripStartOdo = data.startOdo || '';
+    if (currentTripStartTime) {
+      const btn = document.getElementById('toggleTripBtn');
+      const label = document.getElementById('toggleLabel');
+      if (label) label.textContent = '運行終了';
+      if (btn) {
+        btn.classList.remove('start');
+        btn.classList.add('stop');
+      }
+      updateAllEventButtons();
+    }
+  } catch (e) {
+    console.error('Failed to load current trip', e);
+  }
+}
+
+function showOverlay(message = '記録中...') {
+  const overlay = document.getElementById('overlay');
+  if (overlay) {
+    overlay.textContent = message;
+    overlay.classList.remove('hidden');
+  }
+}
+
+function hideOverlay() {
+  const overlay = document.getElementById('overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
 
 function toggleTrip() {
   const btn = document.getElementById('toggleTripBtn');
   if (!currentTripStartTime) {
     currentTripStartTime = new Date();
     currentTripStartAddress = '';
+    currentTripStartOdo = prompt('開始オドメーター（任意）:')?.trim() || '';
     const startTimeStr = currentTripStartTime.toTimeString().slice(0, 5);
     const label = document.getElementById('toggleLabel');
     if (label) label.textContent = '運行終了';
@@ -31,9 +104,12 @@ function toggleTrip() {
       btn.classList.add('stop');
     }
     function finalizeStart(addr) {
+      hideOverlay();
       currentTripStartAddress = addr || '';
-      currentTripEvents.push({ type: '運航開始', time: startTimeStr, location: currentTripStartAddress, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運航開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, fuelAmount: '', fuelPrice: '' });
+      saveCurrentTrip();
     }
+    showOverlay();
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -59,8 +135,9 @@ function toggleTrip() {
     const finalOdoStr = prompt('最終オドメーター（任意）:');
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
     function finalizeEnd(addr) {
+      hideOverlay();
       const endAddr = addr || '';
-      currentTripEvents.push({ type: '運航終了', time: endTimeStr, location: endAddr, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運航終了', startTime: endTimeStr, endTime: '', location: endAddr, fuelAmount: '', fuelPrice: '' });
       const logEntry = {
         startDate: startDateStr,
         startTime: startTimeStr,
@@ -73,20 +150,25 @@ function toggleTrip() {
         cost: '',
         notes: '',
         events: currentTripEvents.slice(),
+        startOdo: currentTripStartOdo,
         finalOdo
       };
       logs.push(logEntry);
       saveLogs();
       currentTripStartTime = null;
       currentTripEvents = [];
+      currentTripStartOdo = '';
       const label = document.getElementById('toggleLabel');
       if (label) label.textContent = '運行開始';
       if (btn) {
         btn.classList.remove('stop');
         btn.classList.add('start');
       }
+      saveCurrentTrip();
+      updateAllEventButtons();
       showList();
     }
+    showOverlay();
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -121,7 +203,15 @@ function loadLogs() {
       distance: l.distance || '',
       cost: l.cost || '',
       notes: l.notes || '',
-      events: l.events || [],
+      events: (l.events || []).map((e) => ({
+        type: e.type || '',
+        startTime: e.startTime || e.time || '',
+        endTime: e.endTime || '',
+        location: e.location || '',
+        fuelAmount: e.fuelAmount || '',
+        fuelPrice: e.fuelPrice || ''
+      })),
+      startOdo: l.startOdo || '',
       finalOdo: l.finalOdo || ''
     }));
   } catch (e) {
@@ -188,7 +278,9 @@ function showForm(editIndex = -1) {
     end: '',
     distance: '',
     cost: '',
-    notes: ''
+    notes: '',
+    startOdo: '',
+    finalOdo: ''
   };
   let log = { ...init };
   if (editIndex >= 0) {
@@ -237,6 +329,14 @@ function showForm(editIndex = -1) {
         <input type="number" step="0.1" id="cost" value="${log.cost || ''}">
       </div>
       <div>
+        <label for="startOdo">開始オドメーター:</label>
+        <input type="number" id="startOdo" value="${log.startOdo || ''}">
+      </div>
+      <div>
+        <label for="finalOdo">終了オドメーター:</label>
+        <input type="number" id="finalOdo" value="${log.finalOdo || ''}">
+      </div>
+      <div>
         <label for="notes">メモ:</label>
         <textarea id="notes" rows="3">${log.notes || ''}</textarea>
       </div>
@@ -264,6 +364,8 @@ function submitLog(editIndex) {
   const end = document.getElementById('end').value.trim();
   const distance = parseFloat(document.getElementById('distance').value);
   const cost = parseFloat(document.getElementById('cost').value);
+  const startOdoVal = document.getElementById('startOdo').value;
+  const finalOdoVal = document.getElementById('finalOdo').value;
   const notes = document.getElementById('notes').value.trim();
   const errors = [];
   if (!startDate) errors.push('開始日を入力してください。');
@@ -272,6 +374,10 @@ function submitLog(editIndex) {
   if (!endTime) errors.push('終了時刻を入力してください。');
   if (!isNaN(distance) && distance < 0) errors.push('距離は0以上で入力してください。');
   if (!isNaN(cost) && cost < 0) errors.push('費用は0以上で入力してください。');
+  const startOdo = startOdoVal === '' ? '' : Number(startOdoVal);
+  const finalOdo = finalOdoVal === '' ? '' : Number(finalOdoVal);
+  if (startOdo !== '' && (isNaN(startOdo) || startOdo < 0)) errors.push('開始オドメーターは0以上で入力してください。');
+  if (finalOdo !== '' && (isNaN(finalOdo) || finalOdo < 0)) errors.push('終了オドメーターは0以上で入力してください。');
   const startDateTime = new Date(`${startDate}T${startTime}`);
   const endDateTime = new Date(`${endDate}T${endTime}`);
   if (startDateTime > endDateTime) errors.push('開始日時は終了日時より前でなければなりません。');
@@ -290,22 +396,49 @@ function submitLog(editIndex) {
     end,
     distance: isNaN(distance) ? '' : distance,
     cost: isNaN(cost) ? '' : cost,
+    startOdo: startOdo === '' ? '' : startOdo,
+    finalOdo: finalOdo === '' ? '' : finalOdo,
     notes,
-    events: existing.events || [],
-    finalOdo: existing.finalOdo || ''
+    events: existing.events || []
   };
   if (editIndex >= 0) logs[editIndex] = logEntry; else logs.push(logEntry);
   saveLogs();
   showList();
 }
 
+function formatEvents(events) {
+  return (events || []).map((ev) => {
+    const time = ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime;
+    return `${ev.type}(${time})`;
+  }).join('<br>');
+}
+
 function showList() {
-  if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
-    return;
+  const rows = [];
+  if (currentTripStartTime) {
+    const startDateStr = currentTripStartTime.toISOString().slice(0, 10);
+    const startTimeStr = currentTripStartTime.toTimeString().slice(0, 5);
+    rows.push(`
+      <tr>
+        <td>${startDateStr}</td>
+        <td>${startTimeStr}</td>
+        <td>-</td>
+        <td>-</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>${currentTripStartOdo || ''}</td>
+        <td></td>
+        <td>${formatEvents(currentTripEvents)}</td>
+        <td>-</td>
+      </tr>
+    `);
   }
-  const tableRows = logs
-    .map((log, index) => `
+  rows.push(
+    ...logs.map(
+      (log, index) => `
       <tr>
         <td>${log.startDate}</td>
         <td>${log.startTime}</td>
@@ -316,13 +449,20 @@ function showList() {
         <td>${log.end}</td>
         <td>${log.distance}</td>
         <td>${log.cost}</td>
+        <td>${log.startOdo || ''}</td>
+        <td>${log.finalOdo || ''}</td>
+        <td>${formatEvents(log.events)}</td>
         <td>
           <button onclick=\"showForm(${index})\">編集</button>
           <button onclick=\"deleteLog(${index})\">削除</button>
         </td>
       </tr>
     `)
-    .join('');
+  );
+  if (rows.length === 0) {
+    document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
+    return;
+  }
   const html = `
     <h2>記録一覧</h2>
     <table>
@@ -337,11 +477,14 @@ function showList() {
           <th>到着地</th>
           <th>距離(km)</th>
           <th>費用(円)</th>
+          <th>開始OD</th>
+          <th>終了OD</th>
+          <th>イベント</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
-        ${tableRows}
+        ${rows.join('')}
       </tbody>
     </table>
   `;
@@ -385,7 +528,9 @@ function showDailyReport() {
     .map((log) => {
       const events = (log.events || [])
         .map((ev) => {
-          let s = `${ev.time} ${ev.type}`;
+          let s = `${ev.startTime}`;
+          if (ev.endTime) s += `～${ev.endTime}`;
+          s += ` ${ev.type}`;
           if (ev.location) s += `(${ev.location})`;
           return `<li>${s}</li>`;
         })
@@ -410,19 +555,25 @@ function recordEvent(type) {
     return;
   }
   const eventTime = new Date();
-  const eventObj = {
-    type,
-    time: eventTime.toTimeString().slice(0, 5),
-    location: '',
-    fuelAmount: '',
-    fuelPrice: ''
-  };
-  function finalize() {
-    // UIボタンは英語で呼ばれる可能性があるので日本語ラベルに変換
-    const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
-    eventObj.type = map[type] || type;
-    currentTripEvents.push(eventObj);
-    alert(`${eventObj.type} を記録しました。`);
+  const timeStr = eventTime.toTimeString().slice(0, 5);
+  const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
+  const jpType = map[type] || type;
+  const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
+  showOverlay();
+  function finalize(addr) {
+    hideOverlay();
+    const location = addr || '';
+    if (ongoing) {
+      ongoing.endTime = timeStr;
+      if (!ongoing.location) ongoing.location = location;
+      alert(`${jpType} 終了を記録しました。`);
+    } else {
+      const eventObj = { type: jpType, startTime: timeStr, endTime: '', location, fuelAmount: '', fuelPrice: '' };
+      currentTripEvents.push(eventObj);
+      alert(`${jpType} 開始を記録しました。`);
+    }
+    updateEventButton(jpType);
+    saveCurrentTrip();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -431,18 +582,13 @@ function recordEvent(type) {
         const lon = pos.coords.longitude;
         fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => {
-            if (data && data.display_name) {
-              eventObj.location = data.display_name;
-            }
-            finalize();
-          })
-          .catch(() => finalize());
+          .then((data) => finalize(data && data.display_name))
+          .catch(() => finalize(''));
       },
-      () => finalize()
+      () => finalize('')
     );
   } else {
-    finalize();
+    finalize('');
   }
 }
 
@@ -465,16 +611,22 @@ function recordFuelEvent() {
   }
   const type = '給油';
   const eventTime = new Date();
+  const timeStr = eventTime.toTimeString().slice(0, 5);
   const eventObj = {
     type,
-    time: eventTime.toTimeString().slice(0, 5),
+    startTime: timeStr,
+    endTime: timeStr,
     location: '',
     fuelAmount,
     fuelPrice
   };
-  function finalize() {
+  showOverlay();
+  function finalize(addr) {
+    hideOverlay();
+    if (addr) eventObj.location = addr;
     currentTripEvents.push(eventObj);
     alert(`${type} を記録しました。`);
+    saveCurrentTrip();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -483,16 +635,13 @@ function recordFuelEvent() {
         const lon = pos.coords.longitude;
         fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => {
-            if (data && data.display_name) eventObj.location = data.display_name;
-            finalize();
-          })
-          .catch(() => finalize());
+          .then((data) => finalize(data && data.display_name))
+          .catch(() => finalize(''));
       },
-      () => finalize()
+      () => finalize('')
     );
   } else {
-    finalize();
+    finalize('');
   }
 }
 
@@ -506,13 +655,15 @@ function exportCSV() {
     alert('エクスポートする記録がありません。');
     return;
   }
-  const headers = ['開始日','開始時刻','終了日','終了時刻','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント','最終オドメーター'];
+  const headers = ['開始日','開始時刻','終了日','終了時刻','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント','開始オドメーター','最終オドメーター'];
   const rows = logs.map((log) => {
     let eventsStr = '';
     if (log.events && log.events.length) {
       eventsStr = log.events
         .map((ev) => {
-          let s = `${ev.time} ${ev.type}`;
+          let s = `${ev.startTime}`;
+          if (ev.endTime) s += `～${ev.endTime}`;
+          s += ` ${ev.type}`;
           if (ev.location) s += `(${ev.location})`;
           if (ev.type === '給油') {
             const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
@@ -536,6 +687,7 @@ function exportCSV() {
       csvEscape(log.cost),
       csvEscape(log.notes || ''),
       csvEscape(eventsStr),
+      csvEscape(log.startOdo || ''),
       csvEscape(log.finalOdo || '')
     ].join(',');
   });
@@ -719,6 +871,7 @@ window.addEventListener('load', () => {
   loadLogs();
   loadMaintenance();
   applyJapaneseLabels();
+  loadCurrentTrip();
   showList();
   registerServiceWorker();
 });
