@@ -17,6 +17,29 @@ const maintenanceIntervals = {
 let currentTripStartTime = null;
 let currentTripEvents = [];
 let currentTripStartAddress = '';
+let currentTripStartOdo = '';
+
+const eventButtonMap = {
+  '積み込み': { id: 'btnLoad', start: '積み込み', end: '積み込み終了' },
+  '荷下ろし': { id: 'btnUnload', start: '荷下ろし', end: '荷下ろし終了' },
+  '休憩': { id: 'btnBreak', start: '休憩', end: '休憩終了' },
+  '休息': { id: 'btnRest', start: '休息', end: '休息終了' }
+};
+
+function updateEventButton(jpType, ongoing) {
+  const map = eventButtonMap[jpType];
+  if (map) {
+    const btn = document.getElementById(map.id);
+    if (btn) btn.textContent = ongoing ? map.end : map.start;
+  }
+}
+
+function resetEventButtons() {
+  Object.values(eventButtonMap).forEach(({ id, start }) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.textContent = start;
+  });
+}
 
 function showOverlay(message = '記録中...') {
   const overlay = document.getElementById('overlay');
@@ -36,6 +59,9 @@ function toggleTrip() {
   if (!currentTripStartTime) {
     currentTripStartTime = new Date();
     currentTripStartAddress = '';
+    currentTripStartOdo = '';
+    const startOdoStr = prompt('開始オドメーター（任意）:');
+    currentTripStartOdo = startOdoStr ? startOdoStr.trim() : '';
     const startTimeStr = currentTripStartTime.toTimeString().slice(0, 5);
     const label = document.getElementById('toggleLabel');
     if (label) label.textContent = '運行終了';
@@ -43,6 +69,7 @@ function toggleTrip() {
       btn.classList.remove('start');
       btn.classList.add('stop');
     }
+    resetEventButtons();
     function finalizeStart(addr) {
       hideOverlay();
       currentTripStartAddress = addr || '';
@@ -89,18 +116,21 @@ function toggleTrip() {
         cost: '',
         notes: '',
         events: currentTripEvents.slice(),
+        startOdo: currentTripStartOdo,
         finalOdo
       };
       logs.push(logEntry);
       saveLogs();
       currentTripStartTime = null;
       currentTripEvents = [];
+      currentTripStartOdo = '';
       const label = document.getElementById('toggleLabel');
       if (label) label.textContent = '運行開始';
       if (btn) {
         btn.classList.remove('stop');
         btn.classList.add('start');
       }
+      resetEventButtons();
       showList();
     }
     showOverlay();
@@ -138,6 +168,7 @@ function loadLogs() {
       distance: l.distance || '',
       cost: l.cost || '',
       notes: l.notes || '',
+      startOdo: l.startOdo || '',
       events: (l.events || []).map((e) => ({
         type: e.type || '',
         startTime: e.startTime || e.time || '',
@@ -212,6 +243,8 @@ function showForm(editIndex = -1) {
     end: '',
     distance: '',
     cost: '',
+    startOdo: '',
+    finalOdo: '',
     notes: ''
   };
   let log = { ...init };
@@ -261,6 +294,14 @@ function showForm(editIndex = -1) {
         <input type="number" step="0.1" id="cost" value="${log.cost || ''}">
       </div>
       <div>
+        <label for="startOdo">開始オドメーター:</label>
+        <input type="number" id="startOdo" value="${log.startOdo || ''}">
+      </div>
+      <div>
+        <label for="finalOdo">終了オドメーター:</label>
+        <input type="number" id="finalOdo" value="${log.finalOdo || ''}">
+      </div>
+      <div>
         <label for="notes">メモ:</label>
         <textarea id="notes" rows="3">${log.notes || ''}</textarea>
       </div>
@@ -288,6 +329,10 @@ function submitLog(editIndex) {
   const end = document.getElementById('end').value.trim();
   const distance = parseFloat(document.getElementById('distance').value);
   const cost = parseFloat(document.getElementById('cost').value);
+  const startOdoVal = document.getElementById('startOdo').value;
+  const finalOdoVal = document.getElementById('finalOdo').value;
+  const startOdo = startOdoVal === '' ? '' : Number(startOdoVal);
+  const finalOdo = finalOdoVal === '' ? '' : Number(finalOdoVal);
   const notes = document.getElementById('notes').value.trim();
   const errors = [];
   if (!startDate) errors.push('開始日を入力してください。');
@@ -296,6 +341,8 @@ function submitLog(editIndex) {
   if (!endTime) errors.push('終了時刻を入力してください。');
   if (!isNaN(distance) && distance < 0) errors.push('距離は0以上で入力してください。');
   if (!isNaN(cost) && cost < 0) errors.push('費用は0以上で入力してください。');
+  if (startOdo !== '' && (isNaN(startOdo) || startOdo < 0)) errors.push('開始オドメーターは0以上で入力してください。');
+  if (finalOdo !== '' && (isNaN(finalOdo) || finalOdo < 0)) errors.push('終了オドメーターは0以上で入力してください。');
   const startDateTime = new Date(`${startDate}T${startTime}`);
   const endDateTime = new Date(`${endDate}T${endTime}`);
   if (startDateTime > endDateTime) errors.push('開始日時は終了日時より前でなければなりません。');
@@ -314,9 +361,10 @@ function submitLog(editIndex) {
     end,
     distance: isNaN(distance) ? '' : distance,
     cost: isNaN(cost) ? '' : cost,
+    startOdo: startOdo === '' ? '' : startOdo,
+    finalOdo: finalOdo === '' ? '' : finalOdo,
     notes,
-    events: existing.events || [],
-    finalOdo: existing.finalOdo || ''
+    events: existing.events || []
   };
   if (editIndex >= 0) logs[editIndex] = logEntry; else logs.push(logEntry);
   saveLogs();
@@ -331,7 +379,7 @@ function formatEvents(events) {
 }
 
 function showList() {
-  if (logs.length === 0) {
+  if (logs.length === 0 && !currentTripStartTime) {
     document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
     return;
   }
@@ -342,6 +390,8 @@ function showList() {
         <td>${log.startTime}</td>
         <td>${log.endDate}</td>
         <td>${log.endTime}</td>
+        <td>${log.startOdo || ''}</td>
+        <td>${log.finalOdo || ''}</td>
         <td>${log.purpose}</td>
         <td>${log.start}</td>
         <td>${log.end}</td>
@@ -355,6 +405,25 @@ function showList() {
       </tr>
     `)
     .join('');
+  const currentRow = currentTripStartTime
+    ? `
+      <tr>
+        <td>${currentTripStartTime.toISOString().slice(0, 10)}</td>
+        <td>${currentTripStartTime.toTimeString().slice(0, 5)}</td>
+        <td>-</td>
+        <td>-</td>
+        <td>${currentTripStartOdo || ''}</td>
+        <td>-</td>
+        <td></td>
+        <td>${currentTripStartAddress}</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>${formatEvents(currentTripEvents)}</td>
+        <td></td>
+      </tr>
+    `
+    : '';
   const html = `
     <h2>記録一覧</h2>
     <table>
@@ -364,6 +433,8 @@ function showList() {
           <th>開始時刻</th>
           <th>終了日</th>
           <th>終了時刻</th>
+          <th>開始オド</th>
+          <th>終了オド</th>
           <th>目的</th>
           <th>出発地</th>
           <th>到着地</th>
@@ -374,7 +445,7 @@ function showList() {
         </tr>
       </thead>
       <tbody>
-        ${tableRows}
+        ${currentRow}${tableRows}
       </tbody>
     </table>
   `;
@@ -456,10 +527,12 @@ function recordEvent(type) {
     if (ongoing) {
       ongoing.endTime = timeStr;
       if (!ongoing.location) ongoing.location = location;
+      updateEventButton(jpType, false);
       alert(`${jpType} 終了を記録しました。`);
     } else {
       const eventObj = { type: jpType, startTime: timeStr, endTime: '', location, fuelAmount: '', fuelPrice: '' };
       currentTripEvents.push(eventObj);
+      updateEventButton(jpType, true);
       alert(`${jpType} 開始を記録しました。`);
     }
   }
@@ -542,7 +615,7 @@ function exportCSV() {
     alert('エクスポートする記録がありません。');
     return;
   }
-  const headers = ['開始日','開始時刻','終了日','終了時刻','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント','最終オドメーター'];
+  const headers = ['開始日','開始時刻','終了日','終了時刻','開始オドメーター','最終オドメーター','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント'];
   const rows = logs.map((log) => {
     let eventsStr = '';
     if (log.events && log.events.length) {
@@ -567,14 +640,15 @@ function exportCSV() {
       csvEscape(log.startTime),
       csvEscape(log.endDate),
       csvEscape(log.endTime),
+      csvEscape(log.startOdo || ''),
+      csvEscape(log.finalOdo || ''),
       csvEscape(log.purpose),
       csvEscape(log.start),
       csvEscape(log.end),
       csvEscape(log.distance),
       csvEscape(log.cost),
       csvEscape(log.notes || ''),
-      csvEscape(eventsStr),
-      csvEscape(log.finalOdo || '')
+      csvEscape(eventsStr)
     ].join(',');
   });
   const csvContent = [headers.join(','), ...rows].join('\r\n');
