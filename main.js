@@ -387,8 +387,21 @@ function formatEvents(events) {
   return (events || []).map((ev) => {
     const time = ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime;
     const duration = ev.durationSec ? ` (${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)` : '';
-    return `${ev.type}(${time})${duration}`;
+    const fuel = ev.type === '給油' && ev.fuelAmount !== '' ? ` ${ev.fuelAmount}L` : '';
+    return `${ev.type}${fuel}(${time})${duration}`;
   }).join('<br>');
+}
+
+function openMap(address) {
+  if (!address) return;
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+  window.open(url, '_blank');
+}
+
+function mapButton(address) {
+  return address
+    ? ` <button type="button" onclick="openMap('${address.replace(/'/g, "\\'")}')">地図</button>`
+    : '';
 }
 
 function showList() {
@@ -501,26 +514,80 @@ function showDailyReport() {
   const sections = logs
     .map((log) => {
       const events = (log.events || [])
-        .map((ev) => {
-          let s = `${ev.startTime}`;
-          if (ev.endTime) s += `～${ev.endTime}`;
-          s += ` ${ev.type}`;
-          if (ev.location) s += `(${ev.location})`;
-          return `<li>${s}</li>`;
-        })
+        .map((ev) => `
+          <tr>
+            <td>${ev.startTime || ''}</td>
+            <td>${ev.endTime || ''}</td>
+            <td>${ev.type}</td>
+            <td>${ev.location || ''}${mapButton(ev.location)}</td>
+            <td>${ev.type === '給油' && ev.fuelAmount !== '' ? ev.fuelAmount : ''}</td>
+          </tr>
+        `)
         .join('');
       return `
         <section class="report">
           <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
-          <p>出発地: ${log.start || ''}</p>
-          <p>到着地: ${log.end || ''}</p>
+          <p>出発地: ${log.start || ''}${mapButton(log.start)}</p>
+          <p>到着地: ${log.end || ''}${mapButton(log.end)}</p>
           <p>目的: ${log.purpose || ''}</p>
-          <ul>${events}</ul>
+          <table>
+            <thead>
+              <tr><th>開始</th><th>終了</th><th>内容</th><th>場所</th><th>給油量(L)</th></tr>
+            </thead>
+            <tbody>${events}</tbody>
+          </table>
         </section>
       `;
     })
     .join('');
   document.getElementById('content').innerHTML = `<h2>日報</h2>${sections}`;
+}
+
+function showRecordsByDate() {
+  if (logs.length === 0) {
+    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
+    return;
+  }
+  const dates = [...new Set(logs.map((l) => l.startDate))].sort();
+  const options = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
+  const html = `
+    <h2>日付別記録</h2>
+    <label for="recordDate">日付:</label>
+    <select id="recordDate">${options}</select>
+    <div id="recordsByDate"></div>
+  `;
+  document.getElementById('content').innerHTML = html;
+  document.getElementById('recordDate').addEventListener('change', update);
+  update();
+  function update() {
+    const date = document.getElementById('recordDate').value;
+    const filtered = logs.filter((l) => l.startDate === date);
+    if (filtered.length === 0) {
+      document.getElementById('recordsByDate').innerHTML = '<p>該当する記録がありません。</p>';
+      return;
+    }
+    const rows = filtered
+      .map((log) => `
+        <tr>
+          <td>${log.startTime}</td>
+          <td>${log.endTime}</td>
+          <td>${log.purpose}</td>
+          <td>${log.start || ''}${mapButton(log.start)}</td>
+          <td>${log.end || ''}${mapButton(log.end)}</td>
+          <td>${log.distance}</td>
+          <td>${log.cost}</td>
+        </tr>
+      `)
+      .join('');
+    document.getElementById('recordsByDate').innerHTML = `
+      <table>
+        <thead>
+          <tr><th>開始時刻</th><th>終了時刻</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
 }
 
 function recordEvent(type) {
@@ -896,6 +963,7 @@ function applyJapaneseLabels() {
   setText('btnNewLog', '新規記録');
   setText('btnList', '一覧');
   setText('btnSummary', '集計');
+  setText('btnByDate', '日付別');
   setText('btnDaily', '日報');
   setText('btnExport', 'CSV出力');
   setText('btnMaintenance', '整備記録');
