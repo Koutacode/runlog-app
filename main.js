@@ -18,6 +18,19 @@ let currentTripStartTime = null;
 let currentTripEvents = [];
 let currentTripStartAddress = '';
 
+function showOverlay(message = '記録中...') {
+  const overlay = document.getElementById('overlay');
+  if (overlay) {
+    overlay.textContent = message;
+    overlay.classList.remove('hidden');
+  }
+}
+
+function hideOverlay() {
+  const overlay = document.getElementById('overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
 function toggleTrip() {
   const btn = document.getElementById('toggleTripBtn');
   if (!currentTripStartTime) {
@@ -31,9 +44,11 @@ function toggleTrip() {
       btn.classList.add('stop');
     }
     function finalizeStart(addr) {
+      hideOverlay();
       currentTripStartAddress = addr || '';
-      currentTripEvents.push({ type: '運航開始', time: startTimeStr, location: currentTripStartAddress, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運航開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, fuelAmount: '', fuelPrice: '' });
     }
+    showOverlay();
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -59,8 +74,9 @@ function toggleTrip() {
     const finalOdoStr = prompt('最終オドメーター（任意）:');
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
     function finalizeEnd(addr) {
+      hideOverlay();
       const endAddr = addr || '';
-      currentTripEvents.push({ type: '運航終了', time: endTimeStr, location: endAddr, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運航終了', startTime: endTimeStr, endTime: '', location: endAddr, fuelAmount: '', fuelPrice: '' });
       const logEntry = {
         startDate: startDateStr,
         startTime: startTimeStr,
@@ -87,6 +103,7 @@ function toggleTrip() {
       }
       showList();
     }
+    showOverlay();
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -121,7 +138,14 @@ function loadLogs() {
       distance: l.distance || '',
       cost: l.cost || '',
       notes: l.notes || '',
-      events: l.events || [],
+      events: (l.events || []).map((e) => ({
+        type: e.type || '',
+        startTime: e.startTime || e.time || '',
+        endTime: e.endTime || '',
+        location: e.location || '',
+        fuelAmount: e.fuelAmount || '',
+        fuelPrice: e.fuelPrice || ''
+      })),
       finalOdo: l.finalOdo || ''
     }));
   } catch (e) {
@@ -299,6 +323,13 @@ function submitLog(editIndex) {
   showList();
 }
 
+function formatEvents(events) {
+  return (events || []).map((ev) => {
+    const time = ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime;
+    return `${ev.type}(${time})`;
+  }).join('<br>');
+}
+
 function showList() {
   if (logs.length === 0) {
     document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
@@ -316,6 +347,7 @@ function showList() {
         <td>${log.end}</td>
         <td>${log.distance}</td>
         <td>${log.cost}</td>
+        <td>${formatEvents(log.events)}</td>
         <td>
           <button onclick=\"showForm(${index})\">編集</button>
           <button onclick=\"deleteLog(${index})\">削除</button>
@@ -337,6 +369,7 @@ function showList() {
           <th>到着地</th>
           <th>距離(km)</th>
           <th>費用(円)</th>
+          <th>イベント</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -385,7 +418,9 @@ function showDailyReport() {
     .map((log) => {
       const events = (log.events || [])
         .map((ev) => {
-          let s = `${ev.time} ${ev.type}`;
+          let s = `${ev.startTime}`;
+          if (ev.endTime) s += `～${ev.endTime}`;
+          s += ` ${ev.type}`;
           if (ev.location) s += `(${ev.location})`;
           return `<li>${s}</li>`;
         })
@@ -410,19 +445,23 @@ function recordEvent(type) {
     return;
   }
   const eventTime = new Date();
-  const eventObj = {
-    type,
-    time: eventTime.toTimeString().slice(0, 5),
-    location: '',
-    fuelAmount: '',
-    fuelPrice: ''
-  };
-  function finalize() {
-    // UIボタンは英語で呼ばれる可能性があるので日本語ラベルに変換
-    const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
-    eventObj.type = map[type] || type;
-    currentTripEvents.push(eventObj);
-    alert(`${eventObj.type} を記録しました。`);
+  const timeStr = eventTime.toTimeString().slice(0, 5);
+  const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
+  const jpType = map[type] || type;
+  const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
+  showOverlay();
+  function finalize(addr) {
+    hideOverlay();
+    const location = addr || '';
+    if (ongoing) {
+      ongoing.endTime = timeStr;
+      if (!ongoing.location) ongoing.location = location;
+      alert(`${jpType} 終了を記録しました。`);
+    } else {
+      const eventObj = { type: jpType, startTime: timeStr, endTime: '', location, fuelAmount: '', fuelPrice: '' };
+      currentTripEvents.push(eventObj);
+      alert(`${jpType} 開始を記録しました。`);
+    }
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -431,18 +470,13 @@ function recordEvent(type) {
         const lon = pos.coords.longitude;
         fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => {
-            if (data && data.display_name) {
-              eventObj.location = data.display_name;
-            }
-            finalize();
-          })
-          .catch(() => finalize());
+          .then((data) => finalize(data && data.display_name))
+          .catch(() => finalize(''));
       },
-      () => finalize()
+      () => finalize('')
     );
   } else {
-    finalize();
+    finalize('');
   }
 }
 
@@ -465,14 +499,19 @@ function recordFuelEvent() {
   }
   const type = '給油';
   const eventTime = new Date();
+  const timeStr = eventTime.toTimeString().slice(0, 5);
   const eventObj = {
     type,
-    time: eventTime.toTimeString().slice(0, 5),
+    startTime: timeStr,
+    endTime: timeStr,
     location: '',
     fuelAmount,
     fuelPrice
   };
-  function finalize() {
+  showOverlay();
+  function finalize(addr) {
+    hideOverlay();
+    if (addr) eventObj.location = addr;
     currentTripEvents.push(eventObj);
     alert(`${type} を記録しました。`);
   }
@@ -483,16 +522,13 @@ function recordFuelEvent() {
         const lon = pos.coords.longitude;
         fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => {
-            if (data && data.display_name) eventObj.location = data.display_name;
-            finalize();
-          })
-          .catch(() => finalize());
+          .then((data) => finalize(data && data.display_name))
+          .catch(() => finalize(''));
       },
-      () => finalize()
+      () => finalize('')
     );
   } else {
-    finalize();
+    finalize('');
   }
 }
 
@@ -512,7 +548,9 @@ function exportCSV() {
     if (log.events && log.events.length) {
       eventsStr = log.events
         .map((ev) => {
-          let s = `${ev.time} ${ev.type}`;
+          let s = `${ev.startTime}`;
+          if (ev.endTime) s += `～${ev.endTime}`;
+          s += ` ${ev.type}`;
           if (ev.location) s += `(${ev.location})`;
           if (ev.type === '給油') {
             const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
