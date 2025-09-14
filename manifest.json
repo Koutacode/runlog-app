@@ -3,7 +3,7 @@
   "short_name": "運行管理(K)",
   "description": "折り畳み端末や通常Androidに最適化された運行管理アプリ",
   "start_url": ".",
-  "display": "standalone",
+  "display": "fullscreen",
   "theme_color": "#0066cc",
   "background_color": "#ffffff",
   "icons": [
