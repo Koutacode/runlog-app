@@ -20,24 +20,36 @@ let currentTripStartAddress = '';
 let currentTripStartOdo = '';
 
 const eventButtonMap = {
-  '積み込み': { id: 'btnLoad', start: '積み込み', end: '積み込み終了' },
-  '荷下ろし': { id: 'btnUnload', start: '荷下ろし', end: '荷下ろし終了' },
-  '休憩': { id: 'btnBreak', start: '休憩', end: '休憩終了' },
-  '休息': { id: 'btnRest', start: '休息', end: '休息終了' }
+  '積み込み': { id: 'btnLoad', start: '積み込み', code: 'Load' },
+  '荷下ろし': { id: 'btnUnload', start: '荷下ろし', code: 'Unload' },
+  '休憩': { id: 'btnBreak', start: '休憩', code: 'Break' },
+  '休息': { id: 'btnRest', start: '休息', code: 'Rest' }
 };
 
 function updateEventButton(jpType, ongoing) {
   const map = eventButtonMap[jpType];
-  if (map) {
-    const btn = document.getElementById(map.id);
-    if (btn) btn.textContent = ongoing ? map.end : map.start;
+  if (!map) return;
+  const btn = document.getElementById(map.id);
+  if (!btn) return;
+  if (ongoing) {
+    btn.textContent = '終了';
+    btn.disabled = false;
+    btn.onclick = () => finishEvent(jpType);
+  } else {
+    btn.textContent = map.start;
+    btn.disabled = false;
+    btn.onclick = () => recordEvent(map.code);
   }
 }
 
 function resetEventButtons() {
-  Object.values(eventButtonMap).forEach(({ id, start }) => {
+  Object.values(eventButtonMap).forEach(({ id, start, code }) => {
     const btn = document.getElementById(id);
-    if (btn) btn.textContent = start;
+    if (btn) {
+      btn.textContent = start;
+      btn.disabled = false;
+      btn.onclick = () => recordEvent(code);
+    }
   });
 }
 
@@ -374,7 +386,8 @@ function submitLog(editIndex) {
 function formatEvents(events) {
   return (events || []).map((ev) => {
     const time = ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime;
-    return `${ev.type}(${time})`;
+    const duration = ev.durationSec ? ` (${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)` : '';
+    return `${ev.type}(${time})${duration}`;
   }).join('<br>');
 }
 
@@ -520,21 +533,59 @@ function recordEvent(type) {
   const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
   const jpType = map[type] || type;
   const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
+  if (ongoing) {
+    alert(`${jpType} は既に記録中です。`);
+    return;
+  }
   showOverlay();
   function finalize(addr) {
     hideOverlay();
     const location = addr || '';
-    if (ongoing) {
-      ongoing.endTime = timeStr;
-      if (!ongoing.location) ongoing.location = location;
-      updateEventButton(jpType, false);
-      alert(`${jpType} 終了を記録しました。`);
-    } else {
-      const eventObj = { type: jpType, startTime: timeStr, endTime: '', location, fuelAmount: '', fuelPrice: '' };
-      currentTripEvents.push(eventObj);
-      updateEventButton(jpType, true);
-      alert(`${jpType} 開始を記録しました。`);
-    }
+    const eventObj = {
+      type: jpType,
+      startTime: timeStr,
+      endTime: '',
+      location,
+      fuelAmount: '',
+      fuelPrice: '',
+      startTimestamp: eventTime.getTime(),
+      durationSec: ''
+    };
+    currentTripEvents.push(eventObj);
+    updateEventButton(jpType, true);
+    alert(`${jpType} 開始を記録しました。`);
+  }
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+          .then((response) => response.json())
+          .then((data) => finalize(data && data.display_name))
+          .catch(() => finalize(''));
+      },
+      () => finalize('')
+    );
+  } else {
+    finalize('');
+  }
+}
+
+function finishEvent(jpType) {
+  const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
+  if (!ongoing) return;
+  const eventTime = new Date();
+  const timeStr = eventTime.toTimeString().slice(0, 5);
+  showOverlay();
+  function finalize(addr) {
+    hideOverlay();
+    ongoing.endTime = timeStr;
+    if (!ongoing.location) ongoing.location = addr || '';
+    ongoing.endTimestamp = eventTime.getTime();
+    ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
+    updateEventButton(jpType, false);
+    alert(`${jpType} 終了を記録しました。`);
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
