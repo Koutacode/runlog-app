@@ -31,6 +31,14 @@ const eventButtonMap = {
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
 let deferredInstallPrompt = null;
 
+function applyDeviceClass() {
+  const ua = navigator.userAgent.toLowerCase();
+  const isFold = ua.includes('z fold') || ua.includes('sm-f96') || ua.includes('sm-f97') || (ua.includes('samsung') && ua.includes('fold'));
+  const body = document.body;
+  if (!body) return;
+  body.classList.add(isFold ? 'fold' : 'android');
+}
+
 function updateEventButton(jpType, ongoing) {
   const map = eventButtonMap[jpType];
   if (!map) return;
@@ -1031,6 +1039,7 @@ window.addEventListener('load', () => {
   loadLogs();
   loadMaintenance();
   applyJapaneseLabels();
+  applyDeviceClass();
   showList();
   registerServiceWorker();
   setupInstallButton();
@@ -1038,9 +1047,9 @@ window.addEventListener('load', () => {
 
 // 画面の固定ラベル（ナビ等）を日本語に
 function applyJapaneseLabels() {
-  document.title = 'ギャラクシーズホールド運行管理';
+  document.title = '運行管理(K)';
   const h1 = document.querySelector('header h1');
-  if (h1) h1.textContent = 'ギャラクシーズホールド運行管理';
+  if (h1) h1.textContent = '運行管理(K)';
   const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
   setText('toggleLabel', '運行開始');
   setText('btnNewLog', '新規記録');
