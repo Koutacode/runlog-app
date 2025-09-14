@@ -17,6 +17,8 @@ const maintenanceIntervals = {
 let currentTripStartTime = null;
 let currentTripEvents = [];
 let currentTripStartAddress = '';
+let currentTripStartLat = null;
+let currentTripStartLon = null;
 let currentTripStartOdo = '';
 
 const eventButtonMap = {
@@ -25,6 +27,9 @@ const eventButtonMap = {
   '休憩': { id: 'btnBreak', start: '休憩', code: 'Break' },
   '休息': { id: 'btnRest', start: '休息', code: 'Rest' }
 };
+
+const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
+let deferredInstallPrompt = null;
 
 function updateEventButton(jpType, ongoing) {
   const map = eventButtonMap[jpType];
@@ -74,6 +79,8 @@ function toggleTrip() {
     currentTripStartOdo = '';
     const startOdoStr = prompt('開始オドメーター（任意）:');
     currentTripStartOdo = startOdoStr ? startOdoStr.trim() : '';
+    currentTripStartLat = null;
+    currentTripStartLon = null;
     const startTimeStr = currentTripStartTime.toTimeString().slice(0, 5);
     const label = document.getElementById('toggleLabel');
     if (label) label.textContent = '運行終了';
@@ -82,10 +89,12 @@ function toggleTrip() {
       btn.classList.add('stop');
     }
     resetEventButtons();
-    function finalizeStart(addr) {
+    function finalizeStart(addr, lat, lon) {
       hideOverlay();
       currentTripStartAddress = addr || '';
-      currentTripEvents.push({ type: '運航開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, fuelAmount: '', fuelPrice: '' });
+      currentTripStartLat = lat;
+      currentTripStartLon = lon;
+      currentTripEvents.push({ type: '運航開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, lat, lon, fuelAmount: '', fuelPrice: '' });
     }
     showOverlay();
     if (navigator.geolocation) {
@@ -93,15 +102,16 @@ function toggleTrip() {
         (pos) => {
           const lat = pos.coords.latitude;
           const lon = pos.coords.longitude;
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
             .then((r) => r.json())
-            .then((d) => finalizeStart(d.display_name))
-            .catch(() => finalizeStart(''));
+            .then((d) => finalizeStart(d.display_name, lat, lon))
+            .catch(() => finalizeStart('', lat, lon));
         },
-        () => finalizeStart('')
+        () => finalizeStart('', null, null),
+        geoOptions
       );
     } else {
-      finalizeStart('');
+      finalizeStart('', null, null);
     }
   } else {
     const endTime = new Date();
@@ -112,10 +122,10 @@ function toggleTrip() {
     const endTimeStr = endTime.toTimeString().slice(0, 5);
     const finalOdoStr = prompt('最終オドメーター（任意）:');
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
-    function finalizeEnd(addr) {
+    function finalizeEnd(addr, lat, lon) {
       hideOverlay();
       const endAddr = addr || '';
-      currentTripEvents.push({ type: '運航終了', startTime: endTimeStr, endTime: '', location: endAddr, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運航終了', startTime: endTimeStr, endTime: '', location: endAddr, lat, lon, fuelAmount: '', fuelPrice: '' });
       const logEntry = {
         startDate: startDateStr,
         startTime: startTimeStr,
@@ -123,7 +133,11 @@ function toggleTrip() {
         endTime: endTimeStr,
         purpose: '',
         start: currentTripStartAddress,
+        startLat: currentTripStartLat,
+        startLon: currentTripStartLon,
         end: endAddr,
+        endLat: lat,
+        endLon: lon,
         distance: '',
         cost: '',
         notes: '',
@@ -136,6 +150,8 @@ function toggleTrip() {
       currentTripStartTime = null;
       currentTripEvents = [];
       currentTripStartOdo = '';
+      currentTripStartLat = null;
+      currentTripStartLon = null;
       const label = document.getElementById('toggleLabel');
       if (label) label.textContent = '運行開始';
       if (btn) {
@@ -151,15 +167,16 @@ function toggleTrip() {
         (pos) => {
           const lat = pos.coords.latitude;
           const lon = pos.coords.longitude;
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
             .then((r) => r.json())
-            .then((d) => finalizeEnd(d.display_name))
-            .catch(() => finalizeEnd(''));
+            .then((d) => finalizeEnd(d.display_name, lat, lon))
+            .catch(() => finalizeEnd('', lat, lon));
         },
-        () => finalizeEnd('')
+        () => finalizeEnd('', null, null),
+        geoOptions
       );
     } else {
-      finalizeEnd('');
+      finalizeEnd('', null, null);
     }
   }
 }
@@ -176,7 +193,11 @@ function loadLogs() {
       endTime: l.endTime || '',
       purpose: l.purpose || '',
       start: l.start || '',
+      startLat: l.startLat || null,
+      startLon: l.startLon || null,
       end: l.end || '',
+      endLat: l.endLat || null,
+      endLon: l.endLon || null,
       distance: l.distance || '',
       cost: l.cost || '',
       notes: l.notes || '',
@@ -186,6 +207,8 @@ function loadLogs() {
         startTime: e.startTime || e.time || '',
         endTime: e.endTime || '',
         location: e.location || '',
+        lat: e.lat || null,
+        lon: e.lon || null,
         fuelAmount: e.fuelAmount || '',
         fuelPrice: e.fuelPrice || ''
       })),
@@ -370,7 +393,11 @@ function submitLog(editIndex) {
     endTime,
     purpose,
     start,
+    startLat: existing.startLat || null,
+    startLon: existing.startLon || null,
     end,
+    endLat: existing.endLat || null,
+    endLon: existing.endLon || null,
     distance: isNaN(distance) ? '' : distance,
     cost: isNaN(cost) ? '' : cost,
     startOdo: startOdo === '' ? '' : startOdo,
@@ -392,16 +419,21 @@ function formatEvents(events) {
   }).join('<br>');
 }
 
-function openMap(address) {
-  if (!address) return;
-  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+function openMap(address, lat, lon) {
+  if (!address && (lat === undefined || lon === undefined)) return;
+  const dest = (lat !== undefined && lon !== undefined && lat !== null && lon !== null)
+    ? `${lat},${lon}`
+    : address;
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
   window.open(url, '_blank');
 }
 
-function mapButton(address) {
-  return address
-    ? ` <button type="button" onclick="openMap('${address.replace(/'/g, "\\'")}')">地図</button>`
-    : '';
+function mapButton(address, lat, lon) {
+  if (!address) return '';
+  const safeAddr = address.replace(/'/g, "\\'");
+  const latStr = lat === null || lat === undefined ? 'null' : lat;
+  const lonStr = lon === null || lon === undefined ? 'null' : lon;
+  return ` <button type="button" onclick="openMap('${safeAddr}', ${latStr}, ${lonStr})">地図</button>`;
 }
 
 function showList() {
@@ -519,7 +551,7 @@ function showDailyReport() {
             <td>${ev.startTime || ''}</td>
             <td>${ev.endTime || ''}</td>
             <td>${ev.type}</td>
-            <td>${ev.location || ''}${mapButton(ev.location)}</td>
+            <td>${ev.location || ''}${mapButton(ev.location, ev.lat, ev.lon)}</td>
             <td>${ev.type === '給油' && ev.fuelAmount !== '' ? ev.fuelAmount : ''}</td>
           </tr>
         `)
@@ -527,8 +559,8 @@ function showDailyReport() {
       return `
         <section class="report">
           <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
-          <p>出発地: ${log.start || ''}${mapButton(log.start)}</p>
-          <p>到着地: ${log.end || ''}${mapButton(log.end)}</p>
+          <p>出発地: ${log.start || ''}${mapButton(log.start, log.startLat, log.startLon)}</p>
+          <p>到着地: ${log.end || ''}${mapButton(log.end, log.endLat, log.endLon)}</p>
           <p>目的: ${log.purpose || ''}</p>
           <table>
             <thead>
@@ -572,8 +604,8 @@ function showRecordsByDate() {
           <td>${log.startTime}</td>
           <td>${log.endTime}</td>
           <td>${log.purpose}</td>
-          <td>${log.start || ''}${mapButton(log.start)}</td>
-          <td>${log.end || ''}${mapButton(log.end)}</td>
+          <td>${log.start || ''}${mapButton(log.start, log.startLat, log.startLon)}</td>
+          <td>${log.end || ''}${mapButton(log.end, log.endLat, log.endLon)}</td>
           <td>${log.distance}</td>
           <td>${log.cost}</td>
         </tr>
@@ -605,7 +637,7 @@ function recordEvent(type) {
     return;
   }
   showOverlay();
-  function finalize(addr) {
+  function finalize(addr, lat, lon) {
     hideOverlay();
     const location = addr || '';
     const eventObj = {
@@ -613,6 +645,8 @@ function recordEvent(type) {
       startTime: timeStr,
       endTime: '',
       location,
+      lat,
+      lon,
       fuelAmount: '',
       fuelPrice: '',
       startTimestamp: eventTime.getTime(),
@@ -627,15 +661,16 @@ function recordEvent(type) {
       (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => finalize(data && data.display_name))
-          .catch(() => finalize(''));
+          .then((data) => finalize(data && data.display_name, lat, lon))
+          .catch(() => finalize('', lat, lon));
       },
-      () => finalize('')
+      () => finalize('', null, null),
+      geoOptions
     );
   } else {
-    finalize('');
+    finalize('', null, null);
   }
 }
 
@@ -645,10 +680,14 @@ function finishEvent(jpType) {
   const eventTime = new Date();
   const timeStr = eventTime.toTimeString().slice(0, 5);
   showOverlay();
-  function finalize(addr) {
+  function finalize(addr, lat, lon) {
     hideOverlay();
     ongoing.endTime = timeStr;
     if (!ongoing.location) ongoing.location = addr || '';
+    if (lat !== null && lon !== null) {
+      ongoing.lat = lat;
+      ongoing.lon = lon;
+    }
     ongoing.endTimestamp = eventTime.getTime();
     ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
     updateEventButton(jpType, false);
@@ -659,15 +698,16 @@ function finishEvent(jpType) {
       (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => finalize(data && data.display_name))
-          .catch(() => finalize(''));
+          .then((data) => finalize(data && data.display_name, lat, lon))
+          .catch(() => finalize('', lat, lon));
       },
-      () => finalize('')
+      () => finalize('', null, null),
+      geoOptions
     );
   } else {
-    finalize('');
+    finalize('', null, null);
   }
 }
 
@@ -696,13 +736,19 @@ function recordFuelEvent() {
     startTime: timeStr,
     endTime: timeStr,
     location: '',
+    lat: null,
+    lon: null,
     fuelAmount,
     fuelPrice
   };
   showOverlay();
-  function finalize(addr) {
+  function finalize(addr, lat, lon) {
     hideOverlay();
     if (addr) eventObj.location = addr;
+    if (lat !== null && lon !== null) {
+      eventObj.lat = lat;
+      eventObj.lon = lon;
+    }
     currentTripEvents.push(eventObj);
     alert(`${type} を記録しました。`);
   }
@@ -711,15 +757,16 @@ function recordFuelEvent() {
       (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
           .then((response) => response.json())
-          .then((data) => finalize(data && data.display_name))
-          .catch(() => finalize(''));
+          .then((data) => finalize(data && data.display_name, lat, lon))
+          .catch(() => finalize('', lat, lon));
       },
-      () => finalize('')
+      () => finalize('', null, null),
+      geoOptions
     );
   } else {
-    finalize('');
+    finalize('', null, null);
   }
 }
 
@@ -944,6 +991,25 @@ function registerServiceWorker() {
   }
 }
 
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  const btn = document.getElementById('btnInstall');
+  if (btn) btn.style.display = 'block';
+});
+
+function setupInstallButton() {
+  const btn = document.getElementById('btnInstall');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    btn.style.display = 'none';
+  });
+}
+
 // 起動時処理
 window.addEventListener('load', () => {
   loadLogs();
@@ -951,6 +1017,7 @@ window.addEventListener('load', () => {
   applyJapaneseLabels();
   showList();
   registerServiceWorker();
+  setupInstallButton();
 });
 
 // 画面の固定ラベル（ナビ等）を日本語に

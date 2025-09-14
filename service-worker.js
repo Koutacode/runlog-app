@@ -1,4 +1,4 @@
-﻿const cacheName = 'runlog-cache-v6';
+﻿const cacheName = 'runlog-cache-v7';
 const assetsToCache = [
   '.',
   'index.html',
