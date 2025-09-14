@@ -46,6 +46,10 @@ nav button {
   box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 
+.hidden {
+  display: none;
+}
+
 /* Style the simple emoji icons in the navigation.  Larger font size makes the icons
    more prominent without needing an external icon font. */
 nav button .icon {

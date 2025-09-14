@@ -995,7 +995,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstallPrompt = e;
   const btn = document.getElementById('btnInstall');
-  if (btn) btn.style.display = 'block';
+  if (btn) btn.classList.remove('hidden');
 });
 
 function setupInstallButton() {
@@ -1006,9 +1006,14 @@ function setupInstallButton() {
     deferredInstallPrompt.prompt();
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt = null;
-    btn.style.display = 'none';
+    btn.classList.add('hidden');
   });
 }
+
+window.addEventListener('appinstalled', () => {
+  const btn = document.getElementById('btnInstall');
+  if (btn) btn.classList.add('hidden');
+});
 
 // 起動時処理
 window.addEventListener('load', () => {
