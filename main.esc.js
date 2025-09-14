@@ -995,24 +995,35 @@ window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstallPrompt = e;
   const btn = document.getElementById('btnInstall');
-  if (btn) btn.classList.remove('hidden');
+  if (btn) {
+    btn.disabled = false;
+    btn.classList.remove('hidden');
+  }
 });
 
 function setupInstallButton() {
   const btn = document.getElementById('btnInstall');
   if (!btn) return;
+  btn.disabled = true;
   btn.addEventListener('click', async () => {
-    if (!deferredInstallPrompt) return;
+    if (!deferredInstallPrompt) {
+      alert('インストールは現在利用できません。ブラウザのメニューから追加してください。');
+      return;
+    }
     deferredInstallPrompt.prompt();
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt = null;
+    btn.disabled = true;
     btn.classList.add('hidden');
   });
 }
 
 window.addEventListener('appinstalled', () => {
   const btn = document.getElementById('btnInstall');
-  if (btn) btn.classList.add('hidden');
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('hidden');
+  }
 });
 
 // 起動時処理
