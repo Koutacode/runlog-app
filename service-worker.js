@@ -1,4 +1,4 @@
-﻿const cacheName = 'runlog-cache-v5';
+﻿const cacheName = 'runlog-cache-v6';
 const assetsToCache = [
   '.',
   'index.html',
@@ -29,9 +29,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    })
+    fetch(event.request, { cache: 'no-store' })
+      .then((response) => response)
+      .catch(() => caches.match(event.request))
   );
 });
 
