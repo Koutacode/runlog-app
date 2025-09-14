@@ -1,10 +1,13 @@
-﻿const cacheName = 'runlog-cache-v7';
+const cacheName = 'runlog-cache-v8';
 const assetsToCache = [
   '.',
   'index.html',
+  'offline.html',
   'styles.css',
   'main.esc.js',
-  'manifest.json'
+  'manifest.json',
+  'icons/icon-192.png',
+  'icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -28,11 +31,16 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    fetch(event.request, { cache: 'no-store' })
-      .then((response) => response)
-      .catch(() => caches.match(event.request))
-  );
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .catch(() => caches.match('offline.html'))
+    );
+  } else {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then((response) => response)
+        .catch(() => caches.match(event.request))
+    );
+  }
 });
-
-
