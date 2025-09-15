@@ -21,6 +21,11 @@ const maintenanceGuidelines = {
     distance: 40000,
     description: 'トラックタイヤは走行3〜5万kmまたは製造から3〜4年、溝が3.2mmを切る前が交換の目安です。'
   },
+  'タイヤローテーション': {
+    months: 6,
+    distance: 10000,
+    description: 'タイヤの偏摩耗を抑えるため、半年または走行1万kmを目安にローテーションを実施すると均等な摩耗が期待できます。'
+  },
   '点検': {
     months: 3,
     description: '車両総重量8トン以上の大型トラックは3カ月ごとの定期点検に加え、1日1回の日常（運行前）点検が義務付けられています。'
@@ -1447,11 +1452,12 @@ function showMaintenanceForm(editIndex = -1) {
           <option${m.type === 'オイル交換' ? ' selected' : ''}>オイル交換</option>
           <option${m.type === 'オイルエレメント交換' ? ' selected' : ''}>オイルエレメント交換</option>
           <option${m.type === 'タイヤ交換' ? ' selected' : ''}>タイヤ交換</option>
+          <option${m.type === 'タイヤローテーション' ? ' selected' : ''}>タイヤローテーション</option>
           <option${m.type === '点検' ? ' selected' : ''}>点検</option>
           <option${m.type === '車検' ? ' selected' : ''}>車検</option>
           <option${m.type === 'バッテリー交換' ? ' selected' : ''}>バッテリー交換</option>
           <option${m.type === 'ワイパー交換' ? ' selected' : ''}>ワイパー交換</option>
-          <option${m.type && !['オイル交換','オイルエレメント交換','タイヤ交換','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
+          <option${m.type && !['オイル交換','オイルエレメント交換','タイヤ交換','タイヤローテーション','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
         </select>
       </div>
       <div>
