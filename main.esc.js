@@ -276,9 +276,9 @@ function getNextMaintenanceDates() {
 function maintenanceRecommendationsHTML() {
   const next = getNextMaintenanceDates();
   const items = Object.entries(next)
-    .map(([type, date]) => `<li>${type}: ${date}</li>`)
+    .map(([type, date]) => `<li><span class="recommend-label">${type}</span><span class="recommend-date">${date}</span></li>`)
     .join('');
-  return `<h3>次回メンテナンス目安</h3><ul>${items}</ul>`;
+  return `<div class="maintenance-summary"><h3>次回メンテナンス目安</h3><ul class="maintenance-next-list">${items}</ul></div>`;
 }
 
 // 走行ログ フォーム
@@ -426,12 +426,18 @@ function submitLog(editIndex) {
 }
 
 function formatEvents(events) {
-  return (events || []).map((ev) => {
-    const time = ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime;
-    const duration = ev.durationSec ? ` (${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)` : '';
-    const fuel = ev.type === '給油' && ev.fuelAmount !== '' ? ` ${ev.fuelAmount}L` : '';
-    return `${ev.type}${fuel}(${time})${duration}`;
-  }).join('<br>');
+  if (!events || events.length === 0) return '<span class="muted">-</span>';
+  const items = events.map((ev) => {
+    const time = ev.endTime ? `${ev.startTime || ''}～${ev.endTime}` : (ev.startTime || '');
+    const durationLabel = ev.durationSec ? `${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒` : '';
+    const fuel = ev.type === '給油' && ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
+    const meta = [];
+    if (fuel) meta.push(`<span class="event-meta">${fuel}</span>`);
+    if (time) meta.push(`<span class="event-time">${time}</span>`);
+    if (durationLabel) meta.push(`<span class="event-duration">${durationLabel}</span>`);
+    return `<li><span class="event-label">${ev.type}</span>${meta.join('')}</li>`;
+  }).join('');
+  return `<ul class="event-list">${items}</ul>`;
 }
 
 function openMap(address, lat, lon) {
@@ -448,81 +454,120 @@ function mapButton(address, lat, lon) {
   const safeAddr = address.replace(/'/g, "\\'");
   const latStr = lat === null || lat === undefined ? 'null' : lat;
   const lonStr = lon === null || lon === undefined ? 'null' : lon;
-  return ` <button type="button" onclick="openMap('${safeAddr}', ${latStr}, ${lonStr})">地図</button>`;
+  return ` <button type="button" class="table-action subtle" onclick="openMap('${safeAddr}', ${latStr}, ${lonStr})">地図</button>`;
 }
 
 function showList() {
+  const content = document.getElementById('content');
+  if (!content) return;
   if (logs.length === 0 && !currentTripStartTime) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
+    content.innerHTML = `
+      <div class="view-header">
+        <h2>記録一覧</h2>
+        <p class="view-description">まだ記録がありません。「新規記録」ボタンから追加してください。</p>
+      </div>
+      <section class="section-card">
+        <p class="muted empty-state">記録がありません。「新規記録」ボタンから追加してください。</p>
+      </section>
+    `;
     return;
   }
   const tableRows = logs
-    .map((log, index) => `
-      <tr>
-        <td>${log.startDate}</td>
-        <td>${log.startTime}</td>
-        <td>${log.endDate}</td>
-        <td>${log.endTime}</td>
-        <td>${log.startOdo || ''}</td>
-        <td>${log.finalOdo || ''}</td>
-        <td>${log.purpose}</td>
-        <td>${log.start}</td>
-        <td>${log.end}</td>
-        <td>${log.distance}</td>
-        <td>${log.cost}</td>
-        <td>${formatEvents(log.events)}</td>
-        <td>
-          <button onclick=\"showForm(${index})\">編集</button>
-          <button onclick=\"deleteLog(${index})\">削除</button>
-        </td>
-      </tr>
-    `)
-    .join('');
-  const currentRow = currentTripStartTime
-    ? `
-      <tr>
-        <td>${currentTripStartTime.toISOString().slice(0, 10)}</td>
-        <td>${currentTripStartTime.toTimeString().slice(0, 5)}</td>
-        <td>-</td>
-        <td>-</td>
-        <td>${currentTripStartOdo || ''}</td>
-        <td>-</td>
-        <td></td>
-        <td>${currentTripStartAddress}</td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td>${formatEvents(currentTripEvents)}</td>
-        <td></td>
-      </tr>
-    `
-    : '';
-  const html = `
-    <h2>記録一覧</h2>
-    <table>
-      <thead>
+    .map((log, index) => {
+      const purposeCell = log.purpose ? log.purpose : '<span class="muted">未入力</span>';
+      const startCell = log.start
+        ? `${log.start}${mapButton(log.start, log.startLat, log.startLon)}`
+        : '<span class="muted">未入力</span>';
+      const endCell = log.end
+        ? `${log.end}${mapButton(log.end, log.endLat, log.endLon)}`
+        : '<span class="muted">未入力</span>';
+      const distanceCell = log.distance !== '' ? log.distance : '<span class="muted">-</span>';
+      const costCell = log.cost !== '' ? log.cost : '<span class="muted">-</span>';
+      const startOdoCell = log.startOdo || '<span class="muted">-</span>';
+      const finalOdoCell = log.finalOdo || '<span class="muted">-</span>';
+      return `
         <tr>
-          <th>開始日</th>
-          <th>開始時刻</th>
-          <th>終了日</th>
-          <th>終了時刻</th>
-          <th>開始オド</th>
-          <th>終了オド</th>
-          <th>目的</th>
-          <th>出発地</th>
-          <th>到着地</th>
-          <th>距離(km)</th>
-          <th>費用(円)</th>
-          <th>イベント</th>
-          <th>操作</th>
+          <td>${log.startDate || '<span class="muted">-</span>'}</td>
+          <td>${log.startTime || '<span class="muted">-</span>'}</td>
+          <td>${log.endDate || '<span class="muted">-</span>'}</td>
+          <td>${log.endTime || '<span class="muted">-</span>'}</td>
+          <td>${startOdoCell}</td>
+          <td>${finalOdoCell}</td>
+          <td>${purposeCell}</td>
+          <td>${startCell}</td>
+          <td>${endCell}</td>
+          <td>${distanceCell}</td>
+          <td>${costCell}</td>
+          <td>${formatEvents(log.events)}</td>
+          <td class="actions">
+            <button class="table-action" onclick="showForm(${index})">編集</button>
+            <button class="table-action" onclick="deleteLog(${index})">削除</button>
+          </td>
         </tr>
-      </thead>
-      <tbody>
-        ${currentRow}${tableRows}
-      </tbody>
-    </table>
+      `;
+    })
+    .join('');
+  let currentRow = '';
+  let activeNotice = '';
+  if (currentTripStartTime) {
+    const startDate = currentTripStartTime.toISOString().slice(0, 10);
+    const startTime = currentTripStartTime.toTimeString().slice(0, 5);
+    const startCell = currentTripStartAddress
+      ? `${currentTripStartAddress}${mapButton(currentTripStartAddress, currentTripStartLat, currentTripStartLon)}`
+      : '<span class="muted">取得中...</span>';
+    currentRow = `
+      <tr class="current-trip">
+        <td>${startDate}</td>
+        <td>${startTime}</td>
+        <td><span class="muted">記録中</span></td>
+        <td><span class="muted">記録中</span></td>
+        <td>${currentTripStartOdo || '<span class="muted">-</span>'}</td>
+        <td><span class="muted">-</span></td>
+        <td><span class="muted">-</span></td>
+        <td>${startCell}</td>
+        <td><span class="muted">-</span></td>
+        <td><span class="muted">-</span></td>
+        <td><span class="muted">-</span></td>
+        <td>${formatEvents(currentTripEvents)}</td>
+        <td class="actions"><span class="muted">運行中</span></td>
+      </tr>
+    `;
+    activeNotice = '<div class="notice">運行中の記録が1件あります。終了すると一覧に反映されます。</div>';
+  }
+  const html = `
+    <div class="view-header">
+      <h2>記録一覧</h2>
+      <p class="view-description">保存した運行を時系列で確認できます。横スクロールで全ての列を表示できます。</p>
+    </div>
+    ${activeNotice}
+    <section class="section-card table-card">
+      <div class="table-container">
+        <table class="data-table data-table--wide">
+          <thead>
+            <tr>
+              <th>開始日</th>
+              <th>開始時刻</th>
+              <th>終了日</th>
+              <th>終了時刻</th>
+              <th>開始オド</th>
+              <th>終了オド</th>
+              <th>目的</th>
+              <th>出発地</th>
+              <th>到着地</th>
+              <th>距離(km)</th>
+              <th>費用(円)</th>
+              <th>イベント</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${currentRow}${tableRows}
+          </tbody>
+        </table>
+      </div>
+    </section>
   `;
-  document.getElementById('content').innerHTML = html;
+  content.innerHTML = html;
 }
 
 function deleteLog(index) {
@@ -554,85 +599,190 @@ function showSummary() {
 }
 
 function showDailyReport() {
+  const content = document.getElementById('content');
+  if (!content) return;
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
+    content.innerHTML = `
+      <div class="view-header">
+        <h2>日報</h2>
+        <p class="view-description">まだ記録がありません。</p>
+      </div>
+      <section class="section-card">
+        <p class="muted empty-state">記録がありません。</p>
+      </section>
+    `;
     return;
   }
+  const formatNumber = (value, suffix = '') => {
+    if (value === '' || value === undefined || value === null) return '<span class="muted">-</span>';
+    const num = Number(value);
+    const text = Number.isNaN(num) ? value : num.toLocaleString('ja-JP');
+    return suffix ? `${text}${suffix}` : text;
+  };
   const sections = logs
     .map((log) => {
-      const events = (log.events || [])
-        .map((ev) => `
-          <tr>
-            <td>${ev.startTime || ''}</td>
-            <td>${ev.endTime || ''}</td>
-            <td>${ev.type}</td>
-            <td>${ev.location || ''}${mapButton(ev.location, ev.lat, ev.lon)}</td>
-            <td>${ev.type === '給油' && ev.fuelAmount !== '' ? ev.fuelAmount : ''}</td>
-          </tr>
-        `)
-        .join('');
+      const eventRows = log.events || [];
+      const rows = eventRows.length
+        ? eventRows
+            .map((ev) => {
+              const startTime = ev.startTime || '<span class="muted">-</span>';
+              const endTime = ev.endTime || '<span class="muted">-</span>';
+              const locationCell = ev.location
+                ? `${ev.location}${mapButton(ev.location, ev.lat, ev.lon)}`
+                : '<span class="muted">-</span>';
+              const fuelCell = ev.type === '給油' && ev.fuelAmount !== ''
+                ? `${ev.fuelAmount}L`
+                : '<span class="muted">-</span>';
+              return `
+                <tr>
+                  <td>${startTime}</td>
+                  <td>${endTime}</td>
+                  <td>${ev.type}</td>
+                  <td>${locationCell}</td>
+                  <td>${fuelCell}</td>
+                </tr>
+              `;
+            })
+            .join('')
+        : '<tr><td colspan="5"><span class="muted">イベントは記録されていません。</span></td></tr>';
+      const startDetail = log.start
+        ? `${log.start}${mapButton(log.start, log.startLat, log.startLon)}`
+        : '<span class="muted">未入力</span>';
+      const endDetail = log.end
+        ? `${log.end}${mapButton(log.end, log.endLat, log.endLon)}`
+        : '<span class="muted">未入力</span>';
+      const purposeDetail = log.purpose ? log.purpose : '<span class="muted">未入力</span>';
+      const notesBlock = log.notes
+        ? `<div><dt>メモ</dt><dd>${log.notes.replace(/\n/g, '<br>')}</dd></div>`
+        : '';
       return `
-        <section class="report">
-          <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
-          <p>出発地: ${log.start || ''}${mapButton(log.start, log.startLat, log.startLon)}</p>
-          <p>到着地: ${log.end || ''}${mapButton(log.end, log.endLat, log.endLon)}</p>
-          <p>目的: ${log.purpose || ''}</p>
-          <table>
-            <thead>
-              <tr><th>開始</th><th>終了</th><th>内容</th><th>場所</th><th>給油量(L)</th></tr>
-            </thead>
-            <tbody>${events}</tbody>
-          </table>
-        </section>
+        <article class="report section-card">
+          <div class="report-header">
+            <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
+          </div>
+          <dl class="report-details">
+            <div>
+              <dt>出発地</dt>
+              <dd>${startDetail}</dd>
+            </div>
+            <div>
+              <dt>到着地</dt>
+              <dd>${endDetail}</dd>
+            </div>
+            <div>
+              <dt>目的</dt>
+              <dd>${purposeDetail}</dd>
+            </div>
+            <div>
+              <dt>距離</dt>
+              <dd>${formatNumber(log.distance, 'km')}</dd>
+            </div>
+            <div>
+              <dt>費用</dt>
+              <dd>${formatNumber(log.cost, '円')}</dd>
+            </div>
+            ${notesBlock}
+          </dl>
+          <div class="table-container compact">
+            <table class="data-table data-table--compact">
+              <thead>
+                <tr><th>開始</th><th>終了</th><th>内容</th><th>場所</th><th>給油量(L)</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </article>
       `;
     })
     .join('');
-  document.getElementById('content').innerHTML = `<h2>日報</h2>${sections}`;
+  content.innerHTML = `
+    <div class="view-header">
+      <h2>日報</h2>
+      <p class="view-description">記録した運行ごとの詳細です。</p>
+    </div>
+    <div class="report-grid">
+      ${sections}
+    </div>
+  `;
 }
 
 function showRecordsByDate() {
+  const content = document.getElementById('content');
+  if (!content) return;
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
+    content.innerHTML = `
+      <div class="view-header">
+        <h2>日付別記録</h2>
+        <p class="view-description">まだ記録がありません。</p>
+      </div>
+      <section class="section-card">
+        <p class="muted empty-state">記録がありません。</p>
+      </section>
+    `;
     return;
   }
   const dates = [...new Set(logs.map((l) => l.startDate))].sort();
   const options = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
-  const html = `
-    <h2>日付別記録</h2>
-    <label for="recordDate">日付:</label>
-    <select id="recordDate">${options}</select>
-    <div id="recordsByDate"></div>
+  content.innerHTML = `
+    <div class="view-header">
+      <h2>日付別記録</h2>
+      <p class="view-description">日付を選択するとその日の運行内容を確認できます。</p>
+    </div>
+    <section class="section-card filter-card">
+      <div class="filter-group">
+        <label for="recordDate">日付</label>
+        <select id="recordDate">${options}</select>
+      </div>
+    </section>
+    <div id="recordsByDate" class="section-card table-card">
+      <p class="muted empty-state">日付を選択すると記録が表示されます。</p>
+    </div>
   `;
-  document.getElementById('content').innerHTML = html;
-  document.getElementById('recordDate').addEventListener('change', update);
+  const selectEl = document.getElementById('recordDate');
+  const listEl = document.getElementById('recordsByDate');
+  if (!selectEl || !listEl) return;
+  selectEl.addEventListener('change', update);
   update();
   function update() {
-    const date = document.getElementById('recordDate').value;
+    const date = selectEl.value;
     const filtered = logs.filter((l) => l.startDate === date);
     if (filtered.length === 0) {
-      document.getElementById('recordsByDate').innerHTML = '<p>該当する記録がありません。</p>';
+      listEl.innerHTML = '<p class="muted empty-state">該当する記録がありません。</p>';
       return;
     }
     const rows = filtered
-      .map((log) => `
-        <tr>
-          <td>${log.startTime}</td>
-          <td>${log.endTime}</td>
-          <td>${log.purpose}</td>
-          <td>${log.start || ''}${mapButton(log.start, log.startLat, log.startLon)}</td>
-          <td>${log.end || ''}${mapButton(log.end, log.endLat, log.endLon)}</td>
-          <td>${log.distance}</td>
-          <td>${log.cost}</td>
-        </tr>
-      `)
+      .map((log) => {
+        const purposeCell = log.purpose ? log.purpose : '<span class="muted">未入力</span>';
+        const startCell = log.start
+          ? `${log.start}${mapButton(log.start, log.startLat, log.startLon)}`
+          : '<span class="muted">未入力</span>';
+        const endCell = log.end
+          ? `${log.end}${mapButton(log.end, log.endLat, log.endLon)}`
+          : '<span class="muted">未入力</span>';
+        const distanceCell = log.distance !== '' ? log.distance : '<span class="muted">-</span>';
+        const costCell = log.cost !== '' ? log.cost : '<span class="muted">-</span>';
+        return `
+          <tr>
+            <td>${log.startTime || '<span class="muted">-</span>'}</td>
+            <td>${log.endTime || '<span class="muted">-</span>'}</td>
+            <td>${purposeCell}</td>
+            <td>${startCell}</td>
+            <td>${endCell}</td>
+            <td>${distanceCell}</td>
+            <td>${costCell}</td>
+          </tr>
+        `;
+      })
       .join('');
-    document.getElementById('recordsByDate').innerHTML = `
-      <table>
-        <thead>
-          <tr><th>開始時刻</th><th>終了時刻</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+    listEl.innerHTML = `
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr><th>開始時刻</th><th>終了時刻</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     `;
   }
 }
@@ -843,51 +993,80 @@ function exportCSV() {
 
 // メンテナンス
 function showMaintenanceList() {
+  const content = document.getElementById('content');
+  if (!content) return;
   if (maintenance.length === 0) {
-    document.getElementById('content').innerHTML = `
-      <h2>メンテナンス</h2>
-      <p>記録がありません。「新規メンテナンス」から追加してください。</p>
-      <button onclick=\"showMaintenanceForm()\">新規メンテナンス</button>
+    content.innerHTML = `
+      <div class="view-header">
+        <h2>メンテナンス</h2>
+        <p class="view-description">まだメンテナンス記録がありません。</p>
+      </div>
+      <section class="section-card">
+        <p class="muted empty-state">記録がありません。「新規メンテナンス」から追加してください。</p>
+        <div class="table-toolbar">
+          <button class="table-action" onclick="showMaintenanceForm()">新規メンテナンス</button>
+        </div>
+      </section>
     `;
     return;
   }
+  const formatNumeric = (value) => {
+    if (value === '' || value === undefined || value === null) return '<span class="muted">-</span>';
+    const num = Number(value);
+    return Number.isNaN(num) ? value : num.toLocaleString('ja-JP');
+  };
   const rows = maintenance
-    .map((m, i) => `
-      <tr>
-        <td>${m.date}</td>
-        <td>${m.type}</td>
-        <td>${m.odometer}</td>
-        <td>${m.cost}</td>
-        <td>${m.notes || ''}</td>
-        <td>
-          <button onclick=\"showMaintenanceForm(${i})\">編集</button>
-          <button onclick=\"deleteMaintenance(${i})\">削除</button>
-        </td>
-      </tr>
-    `)
+    .map((m, i) => {
+      const odometer = formatNumeric(m.odometer);
+      const cost = formatNumeric(m.cost);
+      const notes = m.notes ? m.notes.replace(/\n/g, '<br>') : '<span class="muted">-</span>';
+      const dateCell = m.date || '<span class="muted">-</span>';
+      return `
+        <tr>
+          <td>${dateCell}</td>
+          <td>${m.type}</td>
+          <td>${odometer}</td>
+          <td>${cost}</td>
+          <td>${notes}</td>
+          <td class="actions">
+            <button class="table-action" onclick="showMaintenanceForm(${i})">編集</button>
+            <button class="table-action" onclick="deleteMaintenance(${i})">削除</button>
+          </td>
+        </tr>
+      `;
+    })
     .join('');
   const html = `
-    <h2>メンテナンス</h2>
-    <div style="margin: 0 0 0.5rem 0;">
-      <button onclick=\"showMaintenanceForm()\">新規メンテナンス</button>
-      <button onclick=\"exportMaintenanceCSV()\">CSV出力</button>
+    <div class="view-header">
+      <h2>メンテナンス</h2>
+      <p class="view-description">整備履歴の一覧です。</p>
     </div>
-    <table>
-      <thead>
-        <tr>
-          <th>日付</th>
-          <th>内容</th>
-          <th>オドメーター</th>
-          <th>費用(円)</th>
-          <th>メモ</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    ${maintenanceRecommendationsHTML()}
+    <section class="section-card table-card">
+      <div class="table-toolbar">
+        <button class="table-action" onclick="showMaintenanceForm()">新規メンテナンス</button>
+        <button class="table-action" onclick="exportMaintenanceCSV()">CSV出力</button>
+      </div>
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>日付</th>
+              <th>内容</th>
+              <th>オドメーター</th>
+              <th>費用(円)</th>
+              <th>メモ</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="section-card">
+      ${maintenanceRecommendationsHTML()}
+    </section>
   `;
-  document.getElementById('content').innerHTML = html;
+  content.innerHTML = html;
 }
 
 function showMaintenanceForm(editIndex = -1) {
