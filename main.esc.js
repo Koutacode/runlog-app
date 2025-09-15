@@ -31,6 +31,13 @@ const eventButtonMap = {
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
 let deferredInstallPrompt = null;
 
+window.addEventListener('beforeunload', (e) => {
+  if (currentTripStartTime || currentTripEvents.length > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 function applyDeviceClass() {
   const ua = navigator.userAgent.toLowerCase();
   const isFold = ua.includes('z fold') || ua.includes('sm-f96') || ua.includes('sm-f97') || (ua.includes('samsung') && ua.includes('fold'));
