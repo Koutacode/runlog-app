@@ -4,13 +4,38 @@
 let logs = [];
 // メンテナンス記録
 let maintenance = [];
-const maintenanceIntervals = {
-  'オイル交換': 3,
-  'タイヤ交換': 24,
-  '点検': 6,
-  '車検': 24,
-  'バッテリー交換': 36,
-  'ワイパー交換': 12
+const maintenanceGuidelines = {
+  'オイル交換': {
+    months: 12,
+    distance: 30000,
+    description: '大型トラックは1年または走行2〜4万kmを目安にエンジンオイルを交換すると安心です。'
+  },
+  'オイルエレメント交換': {
+    months: 12,
+    distance: 30000,
+    description: 'オイルエレメントもエンジンオイル交換と同じタイミング（1年／2〜4万km）で交換すると安心です。'
+  },
+  'タイヤ交換': {
+    months: 36,
+    distance: 40000,
+    description: 'トラックタイヤは走行3〜5万kmまたは製造から3〜4年、溝が3.2mmを切る前が交換の目安です。'
+  },
+  '点検': {
+    months: 3,
+    description: '車両総重量8トン以上の大型トラックは3カ月ごとの定期点検と1日1回の日常（運行前）点検が義務付けられています。'
+  },
+  '車検': {
+    months: 12,
+    description: '大型トラックの車検有効期間は初回から毎回1年です。'
+  },
+  'バッテリー交換': {
+    months: 36,
+    description: 'トラック用バッテリーの平均寿命は使用状況にもよりますが3〜4年程度です。'
+  },
+  'ワイパー交換': {
+    months: 12,
+    description: 'ワイパーゴムは1年程度、ブレードは1〜2年を目安に状態を確認して交換しましょう。'
+  }
 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -86,6 +111,99 @@ function timestampToDateString(timestamp) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function addMonthsToDateString(dateStr, months) {
+  if (!dateStr || typeof months !== 'number') return '';
+  const parts = dateStr.split('-').map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return '';
+  let [year, month, day] = parts;
+  let totalMonths = month - 1 + months;
+  year += Math.floor(totalMonths / 12);
+  let monthIndex = totalMonths % 12;
+  if (monthIndex < 0) {
+    monthIndex += 12;
+    year -= 1;
+  }
+  const newMonth = monthIndex + 1;
+  const maxDay = new Date(Date.UTC(year, newMonth, 0)).getUTCDate();
+  const newDay = Math.min(day, maxDay);
+  const y = year;
+  const m = String(newMonth).padStart(2, '0');
+  const d = String(newDay).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getMaintenanceStatusLabel(nextDate) {
+  if (!nextDate) return '';
+  const target = dateStringToUTC(nextDate);
+  if (target === null) return '';
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  if (target < today) return '⚠️ 目安を過ぎています';
+  const diffDays = Math.floor((target - today) / DAY_MS);
+  if (diffDays <= 30) return '⏰ 30日以内に実施を検討してください';
+  return '';
+}
+
+function calculateNextMaintenance(entry) {
+  const preset = maintenanceGuidelines[entry.type];
+  if (!preset) {
+    return { nextDate: '', nextOdo: null, advice: '' };
+  }
+  let nextDate = '';
+  if (preset.months && entry.date) {
+    nextDate = addMonthsToDateString(entry.date, preset.months);
+  }
+  let nextOdo = null;
+  if (preset.distance && entry.odometer !== '') {
+    const odoValue = typeof entry.odometer === 'number' ? entry.odometer : Number(entry.odometer);
+    if (!Number.isNaN(odoValue)) {
+      nextOdo = odoValue + preset.distance;
+    }
+  }
+  const advice = preset.description || '';
+  return { nextDate, nextOdo, advice };
+}
+
+function enrichMaintenanceEntry(entry) {
+  const base = { ...entry };
+  const calc = calculateNextMaintenance(base);
+  base.nextDate = calc.nextDate;
+  base.nextOdo = calc.nextOdo;
+  base.advice = calc.advice;
+  return base;
+}
+
+function maintenanceInfoSegments(entry) {
+  if (!entry) return [];
+  const segments = [];
+  const status = getMaintenanceStatusLabel(entry.nextDate);
+  if (status) segments.push(status);
+  if (entry.nextDate) segments.push(`次回目安日: ${entry.nextDate}`);
+  if (typeof entry.nextOdo === 'number' && !Number.isNaN(entry.nextOdo)) {
+    segments.push(`走行距離目安: 約${Math.round(entry.nextOdo).toLocaleString('ja-JP')}km`);
+  }
+  if (entry.advice) segments.push(entry.advice);
+  return segments;
+}
+
+function maintenanceInfoHTML(entry) {
+  const parts = maintenanceInfoSegments(entry);
+  if (parts.length) return parts.join('<br>');
+  if (entry && entry.type && !maintenanceGuidelines[entry.type]) {
+    return '記録済み（自動目安なし）';
+  }
+  return 'ー';
+}
+
+function maintenanceInfoText(entry) {
+  const parts = maintenanceInfoSegments(entry);
+  if (parts.length) return parts.join(' / ');
+  if (entry && entry.type && !maintenanceGuidelines[entry.type]) {
+    return '記録済み（自動目安なし）';
+  }
+  return 'ー';
 }
 
 function isDateWithinLog(log, targetDate) {
@@ -387,41 +505,53 @@ function saveLogs() {
 function loadMaintenance() {
   try {
     const data = localStorage.getItem('runlog_maintenance');
-    maintenance = data ? JSON.parse(data) : [];
+    if (data) {
+      const parsed = JSON.parse(data);
+      maintenance = Array.isArray(parsed) ? parsed.map(enrichMaintenanceEntry) : [];
+    } else {
+      maintenance = [];
+    }
   } catch (e) {
     console.error('Failed to parse maintenance', e);
     maintenance = [];
   }
 }
 function saveMaintenance() {
+  maintenance = maintenance.map(enrichMaintenanceEntry);
   localStorage.setItem('runlog_maintenance', JSON.stringify(maintenance));
 }
 
-function getNextMaintenanceDates() {
+function getNextMaintenanceSummaries() {
   const latest = {};
-  maintenance.forEach((m) => {
-    if (!latest[m.type] || new Date(latest[m.type]) < new Date(m.date)) {
-      latest[m.type] = m.date;
+  maintenance.forEach((entry) => {
+    if (!entry || !entry.type) return;
+    if (!latest[entry.type] || (latest[entry.type].date || '') < (entry.date || '')) {
+      latest[entry.type] = entry;
     }
   });
-  const result = {};
-  Object.keys(maintenanceIntervals).forEach((type) => {
-    const last = latest[type];
-    if (last) {
-      const d = new Date(last);
-      d.setMonth(d.getMonth() + maintenanceIntervals[type]);
-      result[type] = d.toISOString().slice(0, 10);
+  const summaries = [];
+  Object.entries(maintenanceGuidelines).forEach(([type, preset]) => {
+    const entry = latest[type];
+    if (entry) {
+      summaries.push({ type, message: maintenanceInfoText(entry) });
+      delete latest[type];
     } else {
-      result[type] = '未記録';
+      const fallback = preset.description ? `記録がありません。${preset.description}` : '記録がありません。';
+      summaries.push({ type, message: fallback });
     }
   });
-  return result;
+  Object.entries(latest).forEach(([type, entry]) => {
+    summaries.push({ type, message: maintenanceInfoText(entry) });
+  });
+  return summaries;
 }
 
 function maintenanceRecommendationsHTML() {
-  const next = getNextMaintenanceDates();
-  const items = Object.entries(next)
-    .map(([type, date]) => `<li><span class="recommend-label">${type}</span><span class="recommend-date">${date}</span></li>`)
+  const items = getNextMaintenanceSummaries()
+    .map(({ type, message }) => {
+      const formatted = message.replace(/\s\/\s/g, '<br>');
+      return `<li><span class="recommend-label">${type}</span><span class="recommend-date">${formatted}</span></li>`;
+    })
     .join('');
   return `<div class="maintenance-summary"><h3>次回メンテナンス目安</h3><ul class="maintenance-next-list">${items}</ul></div>`;
 }
@@ -1190,7 +1320,182 @@ function csvEscape(value) {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function exportCSV() {
+const FILE_HANDLE_DB_NAME = 'runlog-file-handles';
+const FILE_HANDLE_STORE_NAME = 'handles';
+let fileHandleDbPromise = null;
+
+function supportsFileSystemAccess() {
+  return typeof window !== 'undefined' && 'showSaveFilePicker' in window && 'indexedDB' in window;
+}
+
+function openHandleDB() {
+  if (!supportsFileSystemAccess()) return Promise.resolve(null);
+  if (!fileHandleDbPromise) {
+    fileHandleDbPromise = new Promise((resolve) => {
+      try {
+        const request = indexedDB.open(FILE_HANDLE_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(FILE_HANDLE_STORE_NAME)) {
+            db.createObjectStore(FILE_HANDLE_STORE_NAME);
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch (err) {
+        console.warn('Failed to open handle DB', err);
+        resolve(null);
+      }
+    });
+  }
+  return fileHandleDbPromise;
+}
+
+async function getStoredHandle(key) {
+  const db = await openHandleDB();
+  if (!db) return null;
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_HANDLE_STORE_NAME, 'readonly');
+      const req = tx.objectStore(FILE_HANDLE_STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('Failed to read stored handle', err);
+    return null;
+  }
+}
+
+async function storeHandle(key, handle) {
+  const db = await openHandleDB();
+  if (!db) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_HANDLE_STORE_NAME, 'readwrite');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(FILE_HANDLE_STORE_NAME).put(handle, key);
+    });
+  } catch (err) {
+    console.warn('Failed to store file handle', err);
+  }
+}
+
+async function verifyFilePermission(handle, mode = 'readwrite') {
+  if (!handle || !handle.queryPermission || !handle.requestPermission) return !!handle;
+  try {
+    const state = await handle.queryPermission({ mode });
+    if (state === 'granted') return true;
+    if (state === 'denied') return false;
+    const request = await handle.requestPermission({ mode });
+    return request === 'granted';
+  } catch (err) {
+    console.warn('Failed to verify file permission', err);
+    return false;
+  }
+}
+
+async function getOrCreateFileHandle(key, suggestedName) {
+  if (!supportsFileSystemAccess()) return null;
+  let handle = await getStoredHandle(key);
+  if (handle) {
+    const ok = await verifyFilePermission(handle, 'readwrite');
+    if (ok) return handle;
+  }
+  try {
+    const pickerOpts = {
+      suggestedName,
+      types: [
+        {
+          description: 'CSVファイル',
+          accept: { 'text/csv': ['.csv'] }
+        }
+      ]
+    };
+    const newHandle = await window.showSaveFilePicker(pickerOpts);
+    await storeHandle(key, newHandle);
+    return newHandle;
+  } catch (err) {
+    if (err && err.name === 'AbortError') return null;
+    throw err;
+  }
+}
+
+async function writeFile(handle, content) {
+  const writable = await handle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+function downloadCsvFile(fileName, csvContent) {
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function parseYearFromDate(dateStr) {
+  if (!dateStr) return null;
+  const match = /^(\d{4})/.exec(dateStr);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isNaN(year) ? null : year;
+}
+
+function determineYearFromDates(dates) {
+  const years = dates.map(parseYearFromDate).filter((y) => y !== null);
+  if (years.length === 0) return new Date().getFullYear();
+  const unique = Array.from(new Set(years));
+  if (unique.length === 1) return unique[0];
+  const current = new Date().getFullYear();
+  if (unique.includes(current)) return current;
+  return Math.max(...unique);
+}
+
+function determineLogExportYear() {
+  const dates = [];
+  logs.forEach((log) => {
+    if (log.startDate) dates.push(log.startDate);
+    if (log.endDate) dates.push(log.endDate);
+  });
+  return determineYearFromDates(dates);
+}
+
+function determineMaintenanceExportYear() {
+  const dates = maintenance.map((m) => m.date).filter(Boolean);
+  return determineYearFromDates(dates);
+}
+
+async function saveCsvFile(handleKey, suggestedName, csvContent) {
+  if (!supportsFileSystemAccess()) {
+    downloadCsvFile(suggestedName, csvContent);
+    alert('ブラウザがファイルの上書き保存に対応していないため、ダウンロードで保存しました。');
+    return;
+  }
+  try {
+    const handle = await getOrCreateFileHandle(handleKey, suggestedName);
+    if (!handle) {
+      downloadCsvFile(suggestedName, csvContent);
+      alert('ファイルの保存先が選択されなかったため、ダウンロードで保存しました。');
+      return;
+    }
+    await writeFile(handle, csvContent);
+    alert('CSVファイルを更新しました。');
+  } catch (error) {
+    console.error('Failed to save CSV', error);
+    downloadCsvFile(suggestedName, csvContent);
+    alert('ファイルの更新に失敗したため、ダウンロードで保存しました。');
+  }
+}
+
+async function exportCSV() {
   if (logs.length === 0) {
     alert('エクスポートする記録がありません。');
     return;
@@ -1235,16 +1540,10 @@ function exportCSV() {
     ].join(',');
   });
   const csvContent = [headers.join(','), ...rows].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'runlog.csv';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const year = determineLogExportYear();
+  const fileName = `runlog-${year}.csv`;
+  const handleKey = `runlog_csv_${year}`;
+  await saveCsvFile(handleKey, fileName, csvContent);
 }
 
 // メンテナンス
@@ -1263,6 +1562,9 @@ function showMaintenanceList() {
           <button class="table-action" onclick="showMaintenanceForm()">新規メンテナンス</button>
         </div>
       </section>
+      <section class="section-card">
+        ${maintenanceRecommendationsHTML()}
+      </section>
     `;
     return;
   }
@@ -1277,6 +1579,7 @@ function showMaintenanceList() {
       const cost = formatNumeric(m.cost);
       const notes = m.notes ? m.notes.replace(/\n/g, '<br>') : '<span class="muted">-</span>';
       const dateCell = m.date || '<span class="muted">-</span>';
+      const info = maintenanceInfoHTML(m);
       return `
         <tr>
           <td>${dateCell}</td>
@@ -1284,6 +1587,7 @@ function showMaintenanceList() {
           <td>${odometer}</td>
           <td>${cost}</td>
           <td>${notes}</td>
+          <td>${info}</td>
           <td class="actions">
             <button class="table-action" onclick="showMaintenanceForm(${i})">編集</button>
             <button class="table-action" onclick="deleteMaintenance(${i})">削除</button>
@@ -1311,6 +1615,7 @@ function showMaintenanceList() {
               <th>オドメーター</th>
               <th>費用(円)</th>
               <th>メモ</th>
+              <th>次回目安</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -1339,12 +1644,13 @@ function showMaintenanceForm(editIndex = -1) {
         <label for=\"mType\">内容:</label>
         <select id=\"mType\">
           <option${m.type === 'オイル交換' ? ' selected' : ''}>オイル交換</option>
+          <option${m.type === 'オイルエレメント交換' ? ' selected' : ''}>オイルエレメント交換</option>
           <option${m.type === 'タイヤ交換' ? ' selected' : ''}>タイヤ交換</option>
           <option${m.type === '点検' ? ' selected' : ''}>点検</option>
           <option${m.type === '車検' ? ' selected' : ''}>車検</option>
           <option${m.type === 'バッテリー交換' ? ' selected' : ''}>バッテリー交換</option>
           <option${m.type === 'ワイパー交換' ? ' selected' : ''}>ワイパー交換</option>
-          <option${m.type && !['オイル交換','タイヤ交換','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
+          <option${m.type && !['オイル交換','オイルエレメント交換','タイヤ交換','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
         </select>
       </div>
       <div>
@@ -1359,6 +1665,7 @@ function showMaintenanceForm(editIndex = -1) {
         <label for=\"mNotes\">メモ:</label>
         <textarea id=\"mNotes\" rows=\"3\">${m.notes || ''}</textarea>
       </div>
+      <div id=\"mntNextInfo\" class=\"maintenance-next-info\" aria-live=\"polite\">記録後に次回目安が表示されます。</div>
       <div>
         <button type=\"submit\">${editIndex >= 0 ? '保存' : '追加'}</button>
         <button type=\"button\" onclick=\"showMaintenanceList()\">キャンセル</button>
@@ -1371,6 +1678,32 @@ function showMaintenanceForm(editIndex = -1) {
     e.preventDefault();
     submitMaintenance(editIndex);
   });
+  const updatePreview = () => {
+    const dateVal = document.getElementById('mDate').value;
+    const typeVal = document.getElementById('mType').value;
+    const odoStr = document.getElementById('mOdo').value;
+    const odo = odoStr === '' ? '' : Number(odoStr);
+    const base = {
+      date: dateVal,
+      type: typeVal,
+      odometer: odoStr === '' || Number.isNaN(odo) ? '' : odo,
+      cost: '',
+      notes: ''
+    };
+    const preview = enrichMaintenanceEntry(base);
+    const el = document.getElementById('mntNextInfo');
+    if (el) {
+      el.innerHTML = maintenanceInfoHTML(preview);
+    }
+  };
+  ['mDate', 'mType', 'mOdo'].forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener('input', updatePreview);
+      input.addEventListener('change', updatePreview);
+    }
+  });
+  updatePreview();
 }
 
 function submitMaintenance(editIndex) {
@@ -1403,30 +1736,27 @@ function deleteMaintenance(index) {
   }
 }
 
-function exportMaintenanceCSV() {
+async function exportMaintenanceCSV() {
   if (maintenance.length === 0) {
     alert('エクスポートするメンテナンス記録がありません。');
     return;
   }
-  const headers = ['日付','内容','オドメーター','費用(円)','メモ'];
+  const headers = ['日付','内容','オドメーター','費用(円)','メモ','次回目安日','次回目安走行距離(km)','次回サマリー'];
   const rows = maintenance.map((m) => [
     csvEscape(m.date),
     csvEscape(m.type),
     csvEscape(m.odometer),
     csvEscape(m.cost),
-    csvEscape(m.notes || '')
+    csvEscape(m.notes || ''),
+    csvEscape(m.nextDate || ''),
+    csvEscape(typeof m.nextOdo === 'number' && !Number.isNaN(m.nextOdo) ? Math.round(m.nextOdo) : ''),
+    csvEscape(maintenanceInfoText(m))
   ].join(','));
   const csvContent = [headers.join(','), ...rows].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'maintenance.csv';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const year = determineMaintenanceExportYear();
+  const fileName = `maintenance-${year}.csv`;
+  const handleKey = `maintenance_csv_${year}`;
+  await saveCsvFile(handleKey, fileName, csvContent);
 }
 
 // Service Worker 登録
