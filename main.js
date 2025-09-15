@@ -62,6 +62,97 @@ function dateStringToUTC(dateStr) {
   return Date.UTC(year, month - 1, day);
 }
 
+function normalizeAddress(address) {
+  if (!address) return '';
+  const raw = String(address).trim();
+  if (!raw) return '';
+  const sanitized = raw
+    .replace(/[\u3000\s]+/g, ' ')
+    .replace(/[，、]/g, ',')
+    .replace(/[。]/g, '')
+    .replace(/[()]/g, '');
+  const parts = sanitized.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return sanitized.replace(/\s+/g, '');
+  }
+  const seen = new Set();
+  const unique = [];
+  parts.forEach((part) => {
+    const trimmed = part.replace(/\s+/g, ' ').trim();
+    const key = trimmed.replace(/\s+/g, '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    unique.push(trimmed);
+  });
+  if (unique.length === 0) {
+    return sanitized.replace(/\s+/g, '');
+  }
+  const normalized = unique.map((part) => part.replace(/\s+/g, ''));
+  const postal = [];
+  const others = [];
+  normalized.forEach((part) => {
+    if (/^〒?\d/.test(part)) {
+      postal.push(part.startsWith('〒') ? part : `〒${part}`);
+    } else {
+      others.push(part);
+    }
+  });
+  return [...postal, ...others].join('');
+}
+
+function timestampToDateString(timestamp) {
+  if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isDateWithinLog(log, targetDate) {
+  if (!log || !targetDate) return false;
+  const target = dateStringToUTC(targetDate);
+  if (target === null) return false;
+  const start = dateStringToUTC(log.startDate);
+  const end = dateStringToUTC(log.endDate || log.startDate);
+  const startValue = start === null ? target : start;
+  const endValue = end === null ? startValue : end;
+  const from = Math.min(startValue, endValue);
+  const to = Math.max(startValue, endValue);
+  if (Number.isNaN(from) || Number.isNaN(to)) return false;
+  return target >= from && target <= to;
+}
+
+function eventMatchesDate(event, log, targetDate) {
+  if (!event || !log || !targetDate) return false;
+  const startDate = timestampToDateString(event.startTimestamp);
+  const endDate = timestampToDateString(event.endTimestamp);
+  if (startDate === targetDate || endDate === targetDate) return true;
+  if (startDate && endDate) {
+    const targetUtc = dateStringToUTC(targetDate);
+    const startUtc = dateStringToUTC(startDate);
+    const endUtc = dateStringToUTC(endDate);
+    if (targetUtc !== null && startUtc !== null && endUtc !== null) {
+      if (targetUtc >= Math.min(startUtc, endUtc) && targetUtc <= Math.max(startUtc, endUtc)) return true;
+    }
+  }
+  if (startDate && !endDate) {
+    const targetUtc = dateStringToUTC(targetDate);
+    const startUtc = dateStringToUTC(startDate);
+    if (targetUtc !== null && startUtc !== null && targetUtc >= startUtc && isDateWithinLog(log, targetDate)) return true;
+  }
+  if (!startDate && endDate) {
+    const targetUtc = dateStringToUTC(targetDate);
+    const endUtc = dateStringToUTC(endDate);
+    if (targetUtc !== null && endUtc !== null && targetUtc <= endUtc && isDateWithinLog(log, targetDate)) return true;
+  }
+  if (!startDate && !endDate) {
+    return isDateWithinLog(log, targetDate);
+  }
+  return false;
+}
+
 function getMaintenanceStatusLabel(nextDate) {
   if (!nextDate) return '';
   const target = dateStringToUTC(nextDate);
@@ -227,10 +318,22 @@ function toggleTrip() {
     resetEventButtons();
     function finalizeStart(addr, lat, lon) {
       hideOverlay();
-      currentTripStartAddress = addr || '';
+      currentTripStartAddress = normalizeAddress(addr || '');
       currentTripStartLat = lat;
       currentTripStartLon = lon;
-      currentTripEvents.push({ type: '運行開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, lat, lon, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({
+        type: '運行開始',
+        startTime: startTimeStr,
+        endTime: '',
+        location: currentTripStartAddress,
+        lat,
+        lon,
+        fuelAmount: '',
+        fuelPrice: '',
+        startTimestamp: currentTripStartTime.getTime(),
+        endTimestamp: null,
+        durationSec: 0
+      });
     }
     showOverlay();
     if (navigator.geolocation) {
@@ -260,8 +363,21 @@ function toggleTrip() {
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
     function finalizeEnd(addr, lat, lon) {
       hideOverlay();
-      const endAddr = addr || '';
-      currentTripEvents.push({ type: '運行終了', startTime: endTimeStr, endTime: '', location: endAddr, lat, lon, fuelAmount: '', fuelPrice: '' });
+      const endAddr = normalizeAddress(addr || '');
+      const eventTimestamp = endTime.getTime();
+      currentTripEvents.push({
+        type: '運行終了',
+        startTime: endTimeStr,
+        endTime: '',
+        location: endAddr,
+        lat,
+        lon,
+        fuelAmount: '',
+        fuelPrice: '',
+        startTimestamp: eventTimestamp,
+        endTimestamp: eventTimestamp,
+        durationSec: 0
+      });
       const logEntry = {
         startDate: startDateStr,
         startTime: startTimeStr,
@@ -322,34 +438,54 @@ function loadLogs() {
   try {
     const data = localStorage.getItem('runlog_logs');
     logs = data ? JSON.parse(data) : [];
-    logs = logs.map((l) => ({
-      startDate: l.startDate || l.date || '',
-      startTime: l.startTime || '',
-      endDate: l.endDate || l.date || '',
-      endTime: l.endTime || '',
-      purpose: l.purpose || '',
-      start: l.start || '',
-      startLat: l.startLat || null,
-      startLon: l.startLon || null,
-      end: l.end || '',
-      endLat: l.endLat || null,
-      endLon: l.endLon || null,
-      distance: l.distance || '',
-      cost: l.cost || '',
-      notes: l.notes || '',
-      startOdo: l.startOdo || '',
-      events: (l.events || []).map((e) => ({
-        type: e.type || '',
-        startTime: e.startTime || e.time || '',
-        endTime: e.endTime || '',
-        location: e.location || '',
-        lat: e.lat || null,
-        lon: e.lon || null,
-        fuelAmount: e.fuelAmount || '',
-        fuelPrice: e.fuelPrice || ''
-      })),
-      finalOdo: l.finalOdo || ''
-    }));
+    logs = logs.map((l) => {
+      const events = (l.events || []).map((e) => {
+        const startTimestamp = typeof e.startTimestamp === 'number' && !Number.isNaN(e.startTimestamp)
+          ? e.startTimestamp
+          : null;
+        const endTimestamp = typeof e.endTimestamp === 'number' && !Number.isNaN(e.endTimestamp)
+          ? e.endTimestamp
+          : null;
+        let durationSec = typeof e.durationSec === 'number' && !Number.isNaN(e.durationSec)
+          ? e.durationSec
+          : '';
+        if (durationSec === '' && startTimestamp !== null && endTimestamp !== null) {
+          durationSec = Math.round((endTimestamp - startTimestamp) / 1000);
+        }
+        return {
+          type: e.type || '',
+          startTime: e.startTime || e.time || '',
+          endTime: e.endTime || '',
+          location: normalizeAddress(e.location || ''),
+          lat: e.lat !== undefined ? e.lat : null,
+          lon: e.lon !== undefined ? e.lon : null,
+          fuelAmount: e.fuelAmount || '',
+          fuelPrice: e.fuelPrice || '',
+          startTimestamp,
+          endTimestamp,
+          durationSec
+        };
+      });
+      return {
+        startDate: l.startDate || l.date || '',
+        startTime: l.startTime || '',
+        endDate: l.endDate || l.date || '',
+        endTime: l.endTime || '',
+        purpose: l.purpose || '',
+        start: normalizeAddress(l.start || ''),
+        startLat: l.startLat !== undefined ? l.startLat : null,
+        startLon: l.startLon !== undefined ? l.startLon : null,
+        end: normalizeAddress(l.end || ''),
+        endLat: l.endLat !== undefined ? l.endLat : null,
+        endLon: l.endLon !== undefined ? l.endLon : null,
+        distance: l.distance || '',
+        cost: l.cost || '',
+        notes: l.notes || '',
+        startOdo: l.startOdo || '',
+        events,
+        finalOdo: l.finalOdo || ''
+      };
+    });
   } catch (e) {
     console.error('Failed to parse stored logs', e);
     logs = [];
@@ -513,8 +649,10 @@ function submitLog(editIndex) {
   const endDate = document.getElementById('endDate').value;
   const endTime = document.getElementById('endTime').value;
   const purpose = document.getElementById('purpose').value.trim();
-  const start = document.getElementById('start').value.trim();
-  const end = document.getElementById('end').value.trim();
+  const startInput = document.getElementById('start').value.trim();
+  const endInput = document.getElementById('end').value.trim();
+  const start = normalizeAddress(startInput);
+  const end = normalizeAddress(endInput);
   const distance = parseFloat(document.getElementById('distance').value);
   const cost = parseFloat(document.getElementById('cost').value);
   const startOdoVal = document.getElementById('startOdo').value;
@@ -546,11 +684,11 @@ function submitLog(editIndex) {
     endTime,
     purpose,
     start,
-    startLat: existing.startLat || null,
-    startLon: existing.startLon || null,
+    startLat: existing.startLat !== undefined ? existing.startLat : null,
+    startLon: existing.startLon !== undefined ? existing.startLon : null,
     end,
-    endLat: existing.endLat || null,
-    endLon: existing.endLon || null,
+    endLat: existing.endLat !== undefined ? existing.endLat : null,
+    endLon: existing.endLon !== undefined ? existing.endLon : null,
     distance: isNaN(distance) ? '' : distance,
     cost: isNaN(cost) ? '' : cost,
     startOdo: startOdo === '' ? '' : startOdo,
@@ -568,7 +706,8 @@ function formatEvents(events) {
     const time = ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime;
     const duration = ev.durationSec ? ` (${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)` : '';
     const fuel = ev.type === '給油' && ev.fuelAmount !== '' ? ` ${ev.fuelAmount}L` : '';
-    return `${ev.type}${fuel}(${time})${duration}`;
+    const location = ev.location ? ` @${normalizeAddress(ev.location)}` : '';
+    return `${ev.type}${fuel}(${time})${duration}${location}`;
   }).join('<br>');
 }
 
@@ -595,7 +734,10 @@ function showList() {
     return;
   }
   const tableRows = logs
-    .map((log, index) => `
+    .map((log, index) => {
+      const startAddress = log.start ? normalizeAddress(log.start) : '';
+      const endAddress = log.end ? normalizeAddress(log.end) : '';
+      return `
       <tr>
         <td>${log.startDate}</td>
         <td>${log.startTime}</td>
@@ -604,8 +746,8 @@ function showList() {
         <td>${log.startOdo || ''}</td>
         <td>${log.finalOdo || ''}</td>
         <td>${log.purpose}</td>
-        <td>${log.start}</td>
-        <td>${log.end}</td>
+        <td>${startAddress}</td>
+        <td>${endAddress}</td>
         <td>${log.distance}</td>
         <td>${log.cost}</td>
         <td>${formatEvents(log.events)}</td>
@@ -614,7 +756,8 @@ function showList() {
           <button onclick=\"deleteLog(${index})\">削除</button>
         </td>
       </tr>
-    `)
+    `;
+    })
     .join('');
   const currentRow = currentTripStartTime
     ? `
@@ -626,7 +769,7 @@ function showList() {
         <td>${currentTripStartOdo || ''}</td>
         <td>-</td>
         <td></td>
-        <td>${currentTripStartAddress}</td>
+        <td>${currentTripStartAddress ? normalizeAddress(currentTripStartAddress) : ''}</td>
         <td></td>
         <td></td>
         <td></td>
@@ -699,21 +842,26 @@ function showDailyReport() {
   const sections = logs
     .map((log) => {
       const events = (log.events || [])
-        .map((ev) => `
+        .map((ev) => {
+          const eventAddress = ev.location ? normalizeAddress(ev.location) : '';
+          return `
           <tr>
             <td>${ev.startTime || ''}</td>
             <td>${ev.endTime || ''}</td>
             <td>${ev.type}</td>
-            <td>${ev.location || ''}${mapButton(ev.location, ev.lat, ev.lon)}</td>
+            <td>${eventAddress}${mapButton(eventAddress, ev.lat, ev.lon)}</td>
             <td>${ev.type === '給油' && ev.fuelAmount !== '' ? ev.fuelAmount : ''}</td>
           </tr>
-        `)
+        `;
+        })
         .join('');
+      const startAddress = log.start ? normalizeAddress(log.start) : '';
+      const endAddress = log.end ? normalizeAddress(log.end) : '';
       return `
         <section class="report">
           <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
-          <p>出発地: ${log.start || ''}${mapButton(log.start, log.startLat, log.startLon)}</p>
-          <p>到着地: ${log.end || ''}${mapButton(log.end, log.endLat, log.endLon)}</p>
+          <p>出発地: ${startAddress}${mapButton(startAddress, log.startLat, log.startLon)}</p>
+          <p>到着地: ${endAddress}${mapButton(endAddress, log.endLat, log.endLon)}</p>
           <p>目的: ${log.purpose || ''}</p>
           <table>
             <thead>
@@ -733,7 +881,29 @@ function showRecordsByDate() {
     document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
     return;
   }
-  const dates = [...new Set(logs.map((l) => l.startDate))].sort();
+  const dateSet = new Set();
+  logs.forEach((log) => {
+    const startUtc = dateStringToUTC(log.startDate);
+    const endUtc = dateStringToUTC(log.endDate || log.startDate);
+    if (startUtc === null && endUtc === null) return;
+    let from = startUtc !== null ? startUtc : endUtc;
+    let to = endUtc !== null ? endUtc : from;
+    if (Number.isNaN(from) || Number.isNaN(to)) return;
+    if (from > to) {
+      const tmp = from;
+      from = to;
+      to = tmp;
+    }
+    for (let ts = from; ts <= to; ts += DAY_MS) {
+      const dateStr = new Date(ts).toISOString().slice(0, 10);
+      dateSet.add(dateStr);
+    }
+  });
+  const dates = Array.from(dateSet).sort();
+  if (dates.length === 0) {
+    document.getElementById('content').innerHTML = '<p>表示できる日付がありません。</p>';
+    return;
+  }
   const options = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
   const html = `
     <h2>日付別記録</h2>
@@ -742,32 +912,77 @@ function showRecordsByDate() {
     <div id="recordsByDate"></div>
   `;
   document.getElementById('content').innerHTML = html;
-  document.getElementById('recordDate').addEventListener('change', update);
+  const selectEl = document.getElementById('recordDate');
+  const listEl = document.getElementById('recordsByDate');
+  if (!selectEl || !listEl) return;
+  function getLogStartValue(log) {
+    const startDate = log.startDate || log.endDate || '';
+    const startTime = log.startTime || '00:00';
+    const candidate = startDate ? new Date(`${startDate}T${startTime}`) : null;
+    if (candidate && !Number.isNaN(candidate.getTime())) return candidate.getTime();
+    const fallback = dateStringToUTC(log.startDate);
+    return fallback !== null ? fallback : 0;
+  }
+  function formatEventForDate(ev) {
+    const parts = [];
+    parts.push(`<strong>${ev.type || ''}</strong>`);
+    const timeRange = ev.startTime
+      ? (ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime)
+      : (ev.endTime || '');
+    if (timeRange) parts.push(timeRange);
+    const durationText = typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0
+      ? `(${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)`
+      : '';
+    if (durationText) parts.push(durationText);
+    const extras = [];
+    if (ev.type === '給油') {
+      if (ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null) extras.push(`${ev.fuelAmount}L`);
+      if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) extras.push(`${ev.fuelPrice}円/L`);
+    }
+    const locationText = ev.location ? normalizeAddress(ev.location) : '';
+    if (locationText) extras.push(`${locationText}${mapButton(locationText, ev.lat, ev.lon)}`);
+    if (extras.length) parts.push(extras.join(' / '));
+    return `<li>${parts.join(' ')}</li>`;
+  }
+  selectEl.addEventListener('change', update);
   update();
   function update() {
-    const date = document.getElementById('recordDate').value;
-    const filtered = logs.filter((l) => l.startDate === date);
+    const date = selectEl.value;
+    const filtered = logs
+      .filter((log) => isDateWithinLog(log, date))
+      .sort((a, b) => getLogStartValue(a) - getLogStartValue(b));
     if (filtered.length === 0) {
-      document.getElementById('recordsByDate').innerHTML = '<p>該当する記録がありません。</p>';
+      listEl.innerHTML = '<p>該当する記録がありません。</p>';
       return;
     }
     const rows = filtered
-      .map((log) => `
+      .map((log) => {
+        const startDateTime = [log.startDate, log.startTime].filter(Boolean).join(' ');
+        const endDateTime = [log.endDate, log.endTime].filter(Boolean).join(' ');
+        const startAddress = log.start ? normalizeAddress(log.start) : '';
+        const endAddress = log.end ? normalizeAddress(log.end) : '';
+        const eventsForDate = (log.events || []).filter((ev) => eventMatchesDate(ev, log, date));
+        const eventsCell = eventsForDate.length
+          ? `<ul>${eventsForDate.map((ev) => formatEventForDate(ev)).join('')}</ul>`
+          : '<span>該当するイベントはありません。</span>';
+        return `
         <tr>
-          <td>${log.startTime}</td>
-          <td>${log.endTime}</td>
-          <td>${log.purpose}</td>
-          <td>${log.start || ''}${mapButton(log.start, log.startLat, log.startLon)}</td>
-          <td>${log.end || ''}${mapButton(log.end, log.endLat, log.endLon)}</td>
+          <td>${startDateTime || ''}</td>
+          <td>${endDateTime || ''}</td>
+          <td>${log.purpose || ''}</td>
+          <td>${startAddress}${mapButton(startAddress, log.startLat, log.startLon)}</td>
+          <td>${endAddress}${mapButton(endAddress, log.endLat, log.endLon)}</td>
           <td>${log.distance}</td>
           <td>${log.cost}</td>
+          <td>${eventsCell}</td>
         </tr>
-      `)
+      `;
+      })
       .join('');
-    document.getElementById('recordsByDate').innerHTML = `
+    listEl.innerHTML = `
       <table>
         <thead>
-          <tr><th>開始時刻</th><th>終了時刻</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th></tr>
+          <tr><th>開始</th><th>終了</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th><th>作業・イベント</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -792,18 +1007,19 @@ function recordEvent(type) {
   showOverlay();
   function finalize(addr, lat, lon) {
     hideOverlay();
-    const location = addr || '';
+    const location = normalizeAddress(addr || '');
     const eventObj = {
       type: jpType,
       startTime: timeStr,
       endTime: '',
       location,
-      lat,
-      lon,
+      lat: lat !== undefined ? lat : null,
+      lon: lon !== undefined ? lon : null,
       fuelAmount: '',
       fuelPrice: '',
       startTimestamp: eventTime.getTime(),
-      durationSec: ''
+      endTimestamp: null,
+      durationSec: 0
     };
     currentTripEvents.push(eventObj);
     updateEventButton(jpType, true);
@@ -835,13 +1051,17 @@ function finishEvent(jpType) {
   function finalize(addr, lat, lon) {
     hideOverlay();
     ongoing.endTime = timeStr;
-    if (!ongoing.location) ongoing.location = addr || '';
-    if (lat !== null && lon !== null) {
-      ongoing.lat = lat;
-      ongoing.lon = lon;
-    }
+    const location = normalizeAddress(addr || '');
+    ongoing.location = normalizeAddress(ongoing.location || location);
+    if (lat !== null && lat !== undefined) ongoing.lat = lat;
+    if (lon !== null && lon !== undefined) ongoing.lon = lon;
     ongoing.endTimestamp = eventTime.getTime();
-    ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
+    if (typeof ongoing.startTimestamp !== 'number' || Number.isNaN(ongoing.startTimestamp)) {
+      ongoing.startTimestamp = ongoing.endTimestamp;
+      ongoing.durationSec = '';
+    } else {
+      ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
+    }
     updateEventButton(jpType, false);
   }
   if (navigator.geolocation) {
@@ -890,16 +1110,18 @@ function recordFuelEvent() {
     lat: null,
     lon: null,
     fuelAmount,
-    fuelPrice
+    fuelPrice,
+    startTimestamp: eventTime.getTime(),
+    endTimestamp: eventTime.getTime(),
+    durationSec: 0
   };
   showOverlay();
   function finalize(addr, lat, lon) {
     hideOverlay();
-    if (addr) eventObj.location = addr;
-    if (lat !== null && lon !== null) {
-      eventObj.lat = lat;
-      eventObj.lon = lon;
-    }
+    const location = normalizeAddress(addr || '');
+    if (location) eventObj.location = location;
+    if (lat !== null && lat !== undefined) eventObj.lat = lat;
+    if (lon !== null && lon !== undefined) eventObj.lon = lon;
     currentTripEvents.push(eventObj);
   }
   if (navigator.geolocation) {
@@ -939,7 +1161,8 @@ function exportCSV() {
           let s = `${ev.startTime}`;
           if (ev.endTime) s += `～${ev.endTime}`;
           s += ` ${ev.type}`;
-          if (ev.location) s += `(${ev.location})`;
+          const location = normalizeAddress(ev.location || '');
+          if (location) s += `(${location})`;
           if (ev.type === '給油') {
             const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
             const price = ev.fuelPrice !== '' ? `${ev.fuelPrice}円/L` : '';
@@ -950,6 +1173,8 @@ function exportCSV() {
         })
         .join('; ');
     }
+    const startAddress = normalizeAddress(log.start || '');
+    const endAddress = normalizeAddress(log.end || '');
     return [
       csvEscape(log.startDate),
       csvEscape(log.startTime),
@@ -958,8 +1183,8 @@ function exportCSV() {
       csvEscape(log.startOdo || ''),
       csvEscape(log.finalOdo || ''),
       csvEscape(log.purpose),
-      csvEscape(log.start),
-      csvEscape(log.end),
+      csvEscape(startAddress),
+      csvEscape(endAddress),
       csvEscape(log.distance),
       csvEscape(log.cost),
       csvEscape(log.notes || ''),

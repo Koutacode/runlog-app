@@ -12,6 +12,7 @@ const maintenanceIntervals = {
   'バッテリー交換': 36,
   'ワイパー交換': 12
 };
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ワンタップ開始/終了の状態
 let currentTripStartTime = null;
@@ -30,6 +31,105 @@ const eventButtonMap = {
 
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
 let deferredInstallPrompt = null;
+
+function normalizeAddress(address) {
+  if (!address) return '';
+  const raw = String(address).trim();
+  if (!raw) return '';
+  const sanitized = raw
+    .replace(/[\u3000\s]+/g, ' ')
+    .replace(/[，、]/g, ',')
+    .replace(/[。]/g, '')
+    .replace(/[()]/g, '');
+  const parts = sanitized.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return sanitized.replace(/\s+/g, '');
+  }
+  const seen = new Set();
+  const unique = [];
+  parts.forEach((part) => {
+    const trimmed = part.replace(/\s+/g, ' ').trim();
+    const key = trimmed.replace(/\s+/g, '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    unique.push(trimmed);
+  });
+  if (unique.length === 0) {
+    return sanitized.replace(/\s+/g, '');
+  }
+  const normalized = unique.map((part) => part.replace(/\s+/g, ''));
+  const postal = [];
+  const others = [];
+  normalized.forEach((part) => {
+    if (/^〒?\d/.test(part)) {
+      postal.push(part.startsWith('〒') ? part : `〒${part}`);
+    } else {
+      others.push(part);
+    }
+  });
+  return [...postal, ...others].join('');
+}
+
+function dateStringToUTC(dateStr) {
+  if (!dateStr) return null;
+  const parts = dateStr.split('-').map((segment) => Number(segment));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+  const [year, month, day] = parts;
+  return Date.UTC(year, month - 1, day);
+}
+
+function timestampToDateString(timestamp) {
+  if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isDateWithinLog(log, targetDate) {
+  if (!log || !targetDate) return false;
+  const target = dateStringToUTC(targetDate);
+  if (target === null) return false;
+  const start = dateStringToUTC(log.startDate);
+  const end = dateStringToUTC(log.endDate || log.startDate);
+  const startValue = start === null ? target : start;
+  const endValue = end === null ? startValue : end;
+  const from = Math.min(startValue, endValue);
+  const to = Math.max(startValue, endValue);
+  if (Number.isNaN(from) || Number.isNaN(to)) return false;
+  return target >= from && target <= to;
+}
+
+function eventMatchesDate(event, log, targetDate) {
+  if (!event || !log || !targetDate) return false;
+  const startDate = timestampToDateString(event.startTimestamp);
+  const endDate = timestampToDateString(event.endTimestamp);
+  if (startDate === targetDate || endDate === targetDate) return true;
+  if (startDate && endDate) {
+    const targetUtc = dateStringToUTC(targetDate);
+    const startUtc = dateStringToUTC(startDate);
+    const endUtc = dateStringToUTC(endDate);
+    if (targetUtc !== null && startUtc !== null && endUtc !== null) {
+      if (targetUtc >= Math.min(startUtc, endUtc) && targetUtc <= Math.max(startUtc, endUtc)) return true;
+    }
+  }
+  if (startDate && !endDate) {
+    const targetUtc = dateStringToUTC(targetDate);
+    const startUtc = dateStringToUTC(startDate);
+    if (targetUtc !== null && startUtc !== null && targetUtc >= startUtc && isDateWithinLog(log, targetDate)) return true;
+  }
+  if (!startDate && endDate) {
+    const targetUtc = dateStringToUTC(targetDate);
+    const endUtc = dateStringToUTC(endDate);
+    if (targetUtc !== null && endUtc !== null && targetUtc <= endUtc && isDateWithinLog(log, targetDate)) return true;
+  }
+  if (!startDate && !endDate) {
+    return isDateWithinLog(log, targetDate);
+  }
+  return false;
+}
 
 window.addEventListener('beforeunload', (e) => {
   if (currentTripStartTime || currentTripEvents.length > 0) {
@@ -106,10 +206,22 @@ function toggleTrip() {
     resetEventButtons();
     function finalizeStart(addr, lat, lon) {
       hideOverlay();
-      currentTripStartAddress = addr || '';
+      currentTripStartAddress = normalizeAddress(addr || '');
       currentTripStartLat = lat;
       currentTripStartLon = lon;
-      currentTripEvents.push({ type: '運行開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, lat, lon, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({
+        type: '運行開始',
+        startTime: startTimeStr,
+        endTime: '',
+        location: currentTripStartAddress,
+        lat,
+        lon,
+        fuelAmount: '',
+        fuelPrice: '',
+        startTimestamp: currentTripStartTime.getTime(),
+        endTimestamp: null,
+        durationSec: 0
+      });
     }
     showOverlay();
     if (navigator.geolocation) {
@@ -139,8 +251,21 @@ function toggleTrip() {
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
     function finalizeEnd(addr, lat, lon) {
       hideOverlay();
-      const endAddr = addr || '';
-      currentTripEvents.push({ type: '運行終了', startTime: endTimeStr, endTime: '', location: endAddr, lat, lon, fuelAmount: '', fuelPrice: '' });
+      const endAddr = normalizeAddress(addr || '');
+      const eventTimestamp = endTime.getTime();
+      currentTripEvents.push({
+        type: '運行終了',
+        startTime: endTimeStr,
+        endTime: '',
+        location: endAddr,
+        lat,
+        lon,
+        fuelAmount: '',
+        fuelPrice: '',
+        startTimestamp: eventTimestamp,
+        endTimestamp: eventTimestamp,
+        durationSec: 0
+      });
       const logEntry = {
         startDate: startDateStr,
         startTime: startTimeStr,
@@ -201,34 +326,54 @@ function loadLogs() {
   try {
     const data = localStorage.getItem('runlog_logs');
     logs = data ? JSON.parse(data) : [];
-    logs = logs.map((l) => ({
-      startDate: l.startDate || l.date || '',
-      startTime: l.startTime || '',
-      endDate: l.endDate || l.date || '',
-      endTime: l.endTime || '',
-      purpose: l.purpose || '',
-      start: l.start || '',
-      startLat: l.startLat || null,
-      startLon: l.startLon || null,
-      end: l.end || '',
-      endLat: l.endLat || null,
-      endLon: l.endLon || null,
-      distance: l.distance || '',
-      cost: l.cost || '',
-      notes: l.notes || '',
-      startOdo: l.startOdo || '',
-      events: (l.events || []).map((e) => ({
-        type: e.type || '',
-        startTime: e.startTime || e.time || '',
-        endTime: e.endTime || '',
-        location: e.location || '',
-        lat: e.lat || null,
-        lon: e.lon || null,
-        fuelAmount: e.fuelAmount || '',
-        fuelPrice: e.fuelPrice || ''
-      })),
-      finalOdo: l.finalOdo || ''
-    }));
+    logs = logs.map((l) => {
+      const events = (l.events || []).map((e) => {
+        const startTimestamp = typeof e.startTimestamp === 'number' && !Number.isNaN(e.startTimestamp)
+          ? e.startTimestamp
+          : null;
+        const endTimestamp = typeof e.endTimestamp === 'number' && !Number.isNaN(e.endTimestamp)
+          ? e.endTimestamp
+          : null;
+        let durationSec = typeof e.durationSec === 'number' && !Number.isNaN(e.durationSec)
+          ? e.durationSec
+          : '';
+        if (durationSec === '' && startTimestamp !== null && endTimestamp !== null) {
+          durationSec = Math.round((endTimestamp - startTimestamp) / 1000);
+        }
+        return {
+          type: e.type || '',
+          startTime: e.startTime || e.time || '',
+          endTime: e.endTime || '',
+          location: normalizeAddress(e.location || ''),
+          lat: e.lat !== undefined ? e.lat : null,
+          lon: e.lon !== undefined ? e.lon : null,
+          fuelAmount: e.fuelAmount || '',
+          fuelPrice: e.fuelPrice || '',
+          startTimestamp,
+          endTimestamp,
+          durationSec
+        };
+      });
+      return {
+        startDate: l.startDate || l.date || '',
+        startTime: l.startTime || '',
+        endDate: l.endDate || l.date || '',
+        endTime: l.endTime || '',
+        purpose: l.purpose || '',
+        start: normalizeAddress(l.start || ''),
+        startLat: l.startLat !== undefined ? l.startLat : null,
+        startLon: l.startLon !== undefined ? l.startLon : null,
+        end: normalizeAddress(l.end || ''),
+        endLat: l.endLat !== undefined ? l.endLat : null,
+        endLon: l.endLon !== undefined ? l.endLon : null,
+        distance: l.distance || '',
+        cost: l.cost || '',
+        notes: l.notes || '',
+        startOdo: l.startOdo || '',
+        events,
+        finalOdo: l.finalOdo || ''
+      };
+    });
   } catch (e) {
     console.error('Failed to parse stored logs', e);
     logs = [];
@@ -375,8 +520,10 @@ function submitLog(editIndex) {
   const endDate = document.getElementById('endDate').value;
   const endTime = document.getElementById('endTime').value;
   const purpose = document.getElementById('purpose').value.trim();
-  const start = document.getElementById('start').value.trim();
-  const end = document.getElementById('end').value.trim();
+  const startInput = document.getElementById('start').value.trim();
+  const endInput = document.getElementById('end').value.trim();
+  const start = normalizeAddress(startInput);
+  const end = normalizeAddress(endInput);
   const distance = parseFloat(document.getElementById('distance').value);
   const cost = parseFloat(document.getElementById('cost').value);
   const startOdoVal = document.getElementById('startOdo').value;
@@ -435,6 +582,10 @@ function formatEvents(events) {
     if (fuel) meta.push(`<span class="event-meta">${fuel}</span>`);
     if (time) meta.push(`<span class="event-time">${time}</span>`);
     if (durationLabel) meta.push(`<span class="event-duration">${durationLabel}</span>`);
+    const locationText = ev.location ? normalizeAddress(ev.location) : '';
+    if (locationText) {
+      meta.push(`<span class="event-meta">${locationText}${mapButton(locationText, ev.lat, ev.lon)}</span>`);
+    }
     return `<li><span class="event-label">${ev.type}</span>${meta.join('')}</li>`;
   }).join('');
   return `<ul class="event-list">${items}</ul>`;
@@ -475,11 +626,13 @@ function showList() {
   const tableRows = logs
     .map((log, index) => {
       const purposeCell = log.purpose ? log.purpose : '<span class="muted">未入力</span>';
-      const startCell = log.start
-        ? `${log.start}${mapButton(log.start, log.startLat, log.startLon)}`
+      const startAddress = log.start ? normalizeAddress(log.start) : '';
+      const endAddress = log.end ? normalizeAddress(log.end) : '';
+      const startCell = startAddress
+        ? `${startAddress}${mapButton(startAddress, log.startLat, log.startLon)}`
         : '<span class="muted">未入力</span>';
-      const endCell = log.end
-        ? `${log.end}${mapButton(log.end, log.endLat, log.endLon)}`
+      const endCell = endAddress
+        ? `${endAddress}${mapButton(endAddress, log.endLat, log.endLon)}`
         : '<span class="muted">未入力</span>';
       const distanceCell = log.distance !== '' ? log.distance : '<span class="muted">-</span>';
       const costCell = log.cost !== '' ? log.cost : '<span class="muted">-</span>';
@@ -512,8 +665,9 @@ function showList() {
   if (currentTripStartTime) {
     const startDate = currentTripStartTime.toISOString().slice(0, 10);
     const startTime = currentTripStartTime.toTimeString().slice(0, 5);
-    const startCell = currentTripStartAddress
-      ? `${currentTripStartAddress}${mapButton(currentTripStartAddress, currentTripStartLat, currentTripStartLon)}`
+    const startAddress = currentTripStartAddress ? normalizeAddress(currentTripStartAddress) : '';
+    const startCell = startAddress
+      ? `${startAddress}${mapButton(startAddress, currentTripStartLat, currentTripStartLon)}`
       : '<span class="muted">取得中...</span>';
     currentRow = `
       <tr class="current-trip">
@@ -627,8 +781,9 @@ function showDailyReport() {
             .map((ev) => {
               const startTime = ev.startTime || '<span class="muted">-</span>';
               const endTime = ev.endTime || '<span class="muted">-</span>';
-              const locationCell = ev.location
-                ? `${ev.location}${mapButton(ev.location, ev.lat, ev.lon)}`
+              const eventAddress = ev.location ? normalizeAddress(ev.location) : '';
+              const locationCell = eventAddress
+                ? `${eventAddress}${mapButton(eventAddress, ev.lat, ev.lon)}`
                 : '<span class="muted">-</span>';
               const fuelCell = ev.type === '給油' && ev.fuelAmount !== ''
                 ? `${ev.fuelAmount}L`
@@ -645,11 +800,13 @@ function showDailyReport() {
             })
             .join('')
         : '<tr><td colspan="5"><span class="muted">イベントは記録されていません。</span></td></tr>';
-      const startDetail = log.start
-        ? `${log.start}${mapButton(log.start, log.startLat, log.startLon)}`
+      const startAddress = log.start ? normalizeAddress(log.start) : '';
+      const startDetail = startAddress
+        ? `${startAddress}${mapButton(startAddress, log.startLat, log.startLon)}`
         : '<span class="muted">未入力</span>';
-      const endDetail = log.end
-        ? `${log.end}${mapButton(log.end, log.endLat, log.endLon)}`
+      const endAddress = log.end ? normalizeAddress(log.end) : '';
+      const endDetail = endAddress
+        ? `${endAddress}${mapButton(endAddress, log.endLat, log.endLon)}`
         : '<span class="muted">未入力</span>';
       const purposeDetail = log.purpose ? log.purpose : '<span class="muted">未入力</span>';
       const notesBlock = log.notes
@@ -721,7 +878,37 @@ function showRecordsByDate() {
     `;
     return;
   }
-  const dates = [...new Set(logs.map((l) => l.startDate))].sort();
+  const dateSet = new Set();
+  logs.forEach((log) => {
+    const startUtc = dateStringToUTC(log.startDate);
+    const endUtc = dateStringToUTC(log.endDate || log.startDate);
+    if (startUtc === null && endUtc === null) return;
+    let from = startUtc !== null ? startUtc : endUtc;
+    let to = endUtc !== null ? endUtc : from;
+    if (Number.isNaN(from) || Number.isNaN(to)) return;
+    if (from > to) {
+      const tmp = from;
+      from = to;
+      to = tmp;
+    }
+    for (let ts = from; ts <= to; ts += DAY_MS) {
+      const dateStr = new Date(ts).toISOString().slice(0, 10);
+      dateSet.add(dateStr);
+    }
+  });
+  const dates = Array.from(dateSet).sort();
+  if (dates.length === 0) {
+    content.innerHTML = `
+      <div class="view-header">
+        <h2>日付別記録</h2>
+        <p class="view-description">表示できる日付がありません。</p>
+      </div>
+      <section class="section-card">
+        <p class="muted empty-state">記録がありません。</p>
+      </section>
+    `;
+    return;
+  }
   const options = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
   content.innerHTML = `
     <div class="view-header">
@@ -741,11 +928,48 @@ function showRecordsByDate() {
   const selectEl = document.getElementById('recordDate');
   const listEl = document.getElementById('recordsByDate');
   if (!selectEl || !listEl) return;
+  function getLogStartValue(log) {
+    const startDate = log.startDate || log.endDate || '';
+    const startTime = log.startTime || '00:00';
+    const candidate = startDate ? new Date(`${startDate}T${startTime}`) : null;
+    if (candidate && !Number.isNaN(candidate.getTime())) return candidate.getTime();
+    const fallback = dateStringToUTC(log.startDate);
+    return fallback !== null ? fallback : 0;
+  }
+  function formatEventForDate(ev) {
+    const pieces = [];
+    pieces.push(`<span class="event-label">${ev.type || ''}</span>`);
+    const timeRange = ev.startTime
+      ? (ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime)
+      : (ev.endTime || '');
+    if (timeRange) pieces.push(`<span class="event-time">${timeRange}</span>`);
+    const durationText = typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0
+      ? `(${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)`
+      : '';
+    if (durationText) pieces.push(`<span class="event-duration">${durationText}</span>`);
+    const extras = [];
+    if (ev.type === '給油') {
+      if (ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null) extras.push(`${ev.fuelAmount}L`);
+      if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) extras.push(`${ev.fuelPrice}円/L`);
+    }
+    const locationText = ev.location ? normalizeAddress(ev.location) : '';
+    if (locationText) {
+      extras.push(`${locationText}${mapButton(locationText, ev.lat, ev.lon)}`);
+    }
+    if (extras.length) pieces.push(`<span class="event-meta">${extras.join(' / ')}</span>`);
+    return `<li>${pieces.join(' ')}</li>`;
+  }
   selectEl.addEventListener('change', update);
   update();
   function update() {
     const date = selectEl.value;
-    const filtered = logs.filter((l) => l.startDate === date);
+    if (!date) {
+      listEl.innerHTML = '<p class="muted empty-state">該当する記録がありません。</p>';
+      return;
+    }
+    const filtered = logs
+      .filter((log) => isDateWithinLog(log, date))
+      .sort((a, b) => getLogStartValue(a) - getLogStartValue(b));
     if (filtered.length === 0) {
       listEl.innerHTML = '<p class="muted empty-state">該当する記録がありません。</p>';
       return;
@@ -753,32 +977,54 @@ function showRecordsByDate() {
     const rows = filtered
       .map((log) => {
         const purposeCell = log.purpose ? log.purpose : '<span class="muted">未入力</span>';
-        const startCell = log.start
-          ? `${log.start}${mapButton(log.start, log.startLat, log.startLon)}`
+        const startDateTime = [log.startDate, log.startTime].filter(Boolean).join(' ');
+        const endDateTime = [log.endDate, log.endTime].filter(Boolean).join(' ');
+        const startAddress = log.start ? normalizeAddress(log.start) : '';
+        const endAddress = log.end ? normalizeAddress(log.end) : '';
+        const startCell = startAddress
+          ? `${startAddress}${mapButton(startAddress, log.startLat, log.startLon)}`
           : '<span class="muted">未入力</span>';
-        const endCell = log.end
-          ? `${log.end}${mapButton(log.end, log.endLat, log.endLon)}`
+        const endCell = endAddress
+          ? `${endAddress}${mapButton(endAddress, log.endLat, log.endLon)}`
           : '<span class="muted">未入力</span>';
-        const distanceCell = log.distance !== '' ? log.distance : '<span class="muted">-</span>';
-        const costCell = log.cost !== '' ? log.cost : '<span class="muted">-</span>';
+        const distanceCell = log.distance !== '' && log.distance !== undefined && log.distance !== null
+          ? log.distance
+          : '<span class="muted">-</span>';
+        const costCell = log.cost !== '' && log.cost !== undefined && log.cost !== null
+          ? log.cost
+          : '<span class="muted">-</span>';
+        const eventsForDate = (log.events || []).filter((ev) => eventMatchesDate(ev, log, date));
+        const eventsCell = eventsForDate.length
+          ? `<ul class="event-list">${eventsForDate.map((ev) => formatEventForDate(ev)).join('')}</ul>`
+          : '<span class="muted">該当するイベントはありません。</span>';
         return `
           <tr>
-            <td>${log.startTime || '<span class="muted">-</span>'}</td>
-            <td>${log.endTime || '<span class="muted">-</span>'}</td>
+            <td>${startDateTime || '<span class="muted">-</span>'}</td>
+            <td>${endDateTime || '<span class="muted">-</span>'}</td>
             <td>${purposeCell}</td>
             <td>${startCell}</td>
             <td>${endCell}</td>
             <td>${distanceCell}</td>
             <td>${costCell}</td>
+            <td>${eventsCell}</td>
           </tr>
         `;
       })
       .join('');
     listEl.innerHTML = `
       <div class="table-container">
-        <table class="data-table">
+        <table class="data-table data-table--wide">
           <thead>
-            <tr><th>開始時刻</th><th>終了時刻</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th></tr>
+            <tr>
+              <th>開始</th>
+              <th>終了</th>
+              <th>目的</th>
+              <th>出発地</th>
+              <th>到着地</th>
+              <th>距離(km)</th>
+              <th>費用(円)</th>
+              <th>作業・イベント</th>
+            </tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -804,18 +1050,19 @@ function recordEvent(type) {
   showOverlay();
   function finalize(addr, lat, lon) {
     hideOverlay();
-    const location = addr || '';
+    const location = normalizeAddress(addr || '');
     const eventObj = {
       type: jpType,
       startTime: timeStr,
       endTime: '',
       location,
-      lat,
-      lon,
+      lat: lat !== undefined ? lat : null,
+      lon: lon !== undefined ? lon : null,
       fuelAmount: '',
       fuelPrice: '',
       startTimestamp: eventTime.getTime(),
-      durationSec: ''
+      endTimestamp: null,
+      durationSec: 0
     };
     currentTripEvents.push(eventObj);
     updateEventButton(jpType, true);
@@ -847,13 +1094,17 @@ function finishEvent(jpType) {
   function finalize(addr, lat, lon) {
     hideOverlay();
     ongoing.endTime = timeStr;
-    if (!ongoing.location) ongoing.location = addr || '';
-    if (lat !== null && lon !== null) {
-      ongoing.lat = lat;
-      ongoing.lon = lon;
-    }
+    const location = normalizeAddress(addr || '');
+    ongoing.location = normalizeAddress(ongoing.location || location);
+    if (lat !== null && lat !== undefined) ongoing.lat = lat;
+    if (lon !== null && lon !== undefined) ongoing.lon = lon;
     ongoing.endTimestamp = eventTime.getTime();
-    ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
+    if (typeof ongoing.startTimestamp !== 'number' || Number.isNaN(ongoing.startTimestamp)) {
+      ongoing.startTimestamp = ongoing.endTimestamp;
+      ongoing.durationSec = '';
+    } else {
+      ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
+    }
     updateEventButton(jpType, false);
   }
   if (navigator.geolocation) {
@@ -902,16 +1153,18 @@ function recordFuelEvent() {
     lat: null,
     lon: null,
     fuelAmount,
-    fuelPrice
+    fuelPrice,
+    startTimestamp: eventTime.getTime(),
+    endTimestamp: eventTime.getTime(),
+    durationSec: 0
   };
   showOverlay();
   function finalize(addr, lat, lon) {
     hideOverlay();
-    if (addr) eventObj.location = addr;
-    if (lat !== null && lon !== null) {
-      eventObj.lat = lat;
-      eventObj.lon = lon;
-    }
+    const location = normalizeAddress(addr || '');
+    if (location) eventObj.location = location;
+    if (lat !== null && lat !== undefined) eventObj.lat = lat;
+    if (lon !== null && lon !== undefined) eventObj.lon = lon;
     currentTripEvents.push(eventObj);
   }
   if (navigator.geolocation) {
@@ -951,7 +1204,8 @@ function exportCSV() {
           let s = `${ev.startTime}`;
           if (ev.endTime) s += `～${ev.endTime}`;
           s += ` ${ev.type}`;
-          if (ev.location) s += `(${ev.location})`;
+          const location = normalizeAddress(ev.location || '');
+          if (location) s += `(${location})`;
           if (ev.type === '給油') {
             const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
             const price = ev.fuelPrice !== '' ? `${ev.fuelPrice}円/L` : '';
@@ -962,6 +1216,8 @@ function exportCSV() {
         })
         .join('; ');
     }
+    const startAddress = normalizeAddress(log.start || '');
+    const endAddress = normalizeAddress(log.end || '');
     return [
       csvEscape(log.startDate),
       csvEscape(log.startTime),
@@ -970,8 +1226,8 @@ function exportCSV() {
       csvEscape(log.startOdo || ''),
       csvEscape(log.finalOdo || ''),
       csvEscape(log.purpose),
-      csvEscape(log.start),
-      csvEscape(log.end),
+      csvEscape(startAddress),
+      csvEscape(endAddress),
       csvEscape(log.distance),
       csvEscape(log.cost),
       csvEscape(log.notes || ''),
