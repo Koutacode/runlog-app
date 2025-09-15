@@ -102,7 +102,7 @@ function toggleTrip() {
       currentTripStartAddress = addr || '';
       currentTripStartLat = lat;
       currentTripStartLon = lon;
-      currentTripEvents.push({ type: '運航開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, lat, lon, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運行開始', startTime: startTimeStr, endTime: '', location: currentTripStartAddress, lat, lon, fuelAmount: '', fuelPrice: '' });
     }
     showOverlay();
     if (navigator.geolocation) {
@@ -133,7 +133,7 @@ function toggleTrip() {
     function finalizeEnd(addr, lat, lon) {
       hideOverlay();
       const endAddr = addr || '';
-      currentTripEvents.push({ type: '運航終了', startTime: endTimeStr, endTime: '', location: endAddr, lat, lon, fuelAmount: '', fuelPrice: '' });
+      currentTripEvents.push({ type: '運行終了', startTime: endTimeStr, endTime: '', location: endAddr, lat, lon, fuelAmount: '', fuelPrice: '' });
       const logEntry = {
         startDate: startDateStr,
         startTime: startTimeStr,
@@ -662,7 +662,6 @@ function recordEvent(type) {
     };
     currentTripEvents.push(eventObj);
     updateEventButton(jpType, true);
-    alert(`${jpType} 開始を記録しました。`);
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -699,7 +698,6 @@ function finishEvent(jpType) {
     ongoing.endTimestamp = eventTime.getTime();
     ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
     updateEventButton(jpType, false);
-    alert(`${jpType} 終了を記録しました。`);
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -758,7 +756,6 @@ function recordFuelEvent() {
       eventObj.lon = lon;
     }
     currentTripEvents.push(eventObj);
-    alert(`${type} を記録しました。`);
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
