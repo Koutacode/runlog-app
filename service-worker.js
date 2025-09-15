@@ -1,4 +1,4 @@
-const cacheName = 'runlog-cache-v8';
+const cacheName = 'runlog-cache-v9';
 const assetsToCache = [
   '.',
   'index.html',
@@ -33,13 +33,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request, { cache: 'no-store' })
-        .catch(() => caches.match('offline.html'))
+      fetch(event.request).catch(() =>
+        caches.match('index.html').then((res) => res || caches.match('offline.html'))
+      )
     );
   } else {
     event.respondWith(
-      fetch(event.request, { cache: 'no-store' })
-        .catch(() => caches.match(event.request))
+      caches.match(event.request).then((res) => res || fetch(event.request))
     );
   }
 });
