@@ -4,6 +4,8 @@
 let logs = [];
 // メンテナンス記録
 let maintenance = [];
+// Googleスプレッドシート送信先URL（ローカルに保存）
+let sheetScriptUrl = localStorage.getItem('sheetUrl') || '';
 const maintenanceIntervals = {
   'オイル交換': 3,
   'タイヤ交換': 24,
@@ -810,7 +812,7 @@ function exportCSV() {
           }
           return s;
         })
-        .join('; ');
+        .join('\n');
     }
     return [
       csvEscape(log.startDate),
@@ -828,7 +830,7 @@ function exportCSV() {
       csvEscape(eventsStr)
     ].join(',');
   });
-  const csvContent = [headers.join(','), ...rows].join('\r\n');
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -839,6 +841,32 @@ function exportCSV() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function exportToSheet() {
+  if (logs.length === 0) {
+    alert('送信する記録がありません。');
+    return;
+  }
+  if (!sheetScriptUrl) {
+    const url = prompt('スプレッドシートのWebアプリURLを入力してください:');
+    if (!url) return;
+    sheetScriptUrl = url;
+    localStorage.setItem('sheetUrl', sheetScriptUrl);
+  }
+  fetch(sheetScriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ logs })
+  })
+    .then((res) => {
+      if (res.ok) {
+        alert('スプレッドシートに送信しました。');
+      } else {
+        alert('送信に失敗しました。');
+      }
+    })
+    .catch(() => alert('送信に失敗しました。'));
 }
 
 // メンテナンス
