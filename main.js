@@ -4,14 +4,135 @@
 let logs = [];
 // メンテナンス記録
 let maintenance = [];
-const maintenanceIntervals = {
-  'オイル交換': 3,
-  'タイヤ交換': 24,
-  '点検': 6,
-  '車検': 24,
-  'バッテリー交換': 36,
-  'ワイパー交換': 12
+const DAY_MS = 24 * 60 * 60 * 1000;
+const maintenanceGuidelines = {
+  'オイル交換': {
+    months: 6,
+    distance: 5000,
+    description: '寒冷地ではエンジンオイルの劣化が早いため、半年または5,000kmごとに交換すると安心です。'
+  },
+  'タイヤ交換': {
+    months: 6,
+    description: '北海道では春（4〜5月）と初冬（10〜11月）に夏冬タイヤを履き替えるのが一般的です。'
+  },
+  '点検': {
+    months: 6,
+    description: '法定12カ月点検に合わせて、冬前の点検も行うとトラブル防止につながります。'
+  },
+  '車検': {
+    months: 24,
+    description: '自家用車は2年ごとに車検。初回のみ3年後ですが、その後は24カ月ごとが基本です。'
+  },
+  'バッテリー交換': {
+    months: 36,
+    description: '寒冷地では寿命が短くなりがちなので、3年程度での交換計画が推奨されています。'
+  },
+  'ワイパー交換': {
+    months: 12,
+    description: '凍結や雪でゴムが傷みやすいので年1回の交換が目安です。'
+  }
 };
+
+function addMonthsToDateString(dateStr, months) {
+  if (!dateStr || typeof months !== 'number') return '';
+  const parts = dateStr.split('-').map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return '';
+  let [year, month, day] = parts;
+  let totalMonths = month - 1 + months;
+  year += Math.floor(totalMonths / 12);
+  let monthIndex = totalMonths % 12;
+  if (monthIndex < 0) {
+    monthIndex += 12;
+    year -= 1;
+  }
+  const newMonth = monthIndex + 1;
+  const maxDay = new Date(Date.UTC(year, newMonth, 0)).getUTCDate();
+  const newDay = Math.min(day, maxDay);
+  const y = year;
+  const m = String(newMonth).padStart(2, '0');
+  const d = String(newDay).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function dateStringToUTC(dateStr) {
+  if (!dateStr) return null;
+  const parts = dateStr.split('-').map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+  const [year, month, day] = parts;
+  return Date.UTC(year, month - 1, day);
+}
+
+function getMaintenanceStatusLabel(nextDate) {
+  if (!nextDate) return '';
+  const target = dateStringToUTC(nextDate);
+  if (target === null) return '';
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  if (target < today) return '⚠️ 目安を過ぎています';
+  const diffDays = Math.floor((target - today) / DAY_MS);
+  if (diffDays <= 30) return '⏰ 30日以内に実施を検討してください';
+  return '';
+}
+
+function calculateNextMaintenance(entry) {
+  const preset = maintenanceGuidelines[entry.type];
+  if (!preset) {
+    return { nextDate: '', nextOdo: null, advice: '' };
+  }
+  let nextDate = '';
+  if (preset.months && entry.date) {
+    nextDate = addMonthsToDateString(entry.date, preset.months);
+  }
+  let nextOdo = null;
+  if (preset.distance && entry.odometer !== '') {
+    const odoValue = typeof entry.odometer === 'number' ? entry.odometer : Number(entry.odometer);
+    if (!Number.isNaN(odoValue)) {
+      nextOdo = odoValue + preset.distance;
+    }
+  }
+  const advice = preset.description || '';
+  return { nextDate, nextOdo, advice };
+}
+
+function enrichMaintenanceEntry(entry) {
+  const base = { ...entry };
+  const calc = calculateNextMaintenance(base);
+  base.nextDate = calc.nextDate;
+  base.nextOdo = calc.nextOdo;
+  base.advice = calc.advice;
+  return base;
+}
+
+function maintenanceInfoSegments(entry) {
+  if (!entry) return [];
+  const segments = [];
+  const status = getMaintenanceStatusLabel(entry.nextDate);
+  if (status) segments.push(status);
+  if (entry.nextDate) segments.push(`次回目安日: ${entry.nextDate}`);
+  if (typeof entry.nextOdo === 'number' && !Number.isNaN(entry.nextOdo)) {
+    segments.push(`走行距離目安: 約${Math.round(entry.nextOdo).toLocaleString('ja-JP')}km`);
+  }
+  if (entry.advice) segments.push(entry.advice);
+  return segments;
+}
+
+function maintenanceInfoHTML(entry) {
+  const parts = maintenanceInfoSegments(entry);
+  if (parts.length) return parts.join('<br>');
+  if (entry && entry.type && !maintenanceGuidelines[entry.type]) {
+    return '記録済み（自動目安なし）';
+  }
+  return 'ー';
+}
+
+function maintenanceInfoText(entry) {
+  const parts = maintenanceInfoSegments(entry);
+  if (parts.length) return parts.join(' / ');
+  if (entry && entry.type && !maintenanceGuidelines[entry.type]) {
+    return '記録済み（自動目安なし）';
+  }
+  return 'ー';
+}
 
 // ワンタップ開始/終了の状態
 let currentTripStartTime = null;
@@ -242,43 +363,60 @@ function saveLogs() {
 function loadMaintenance() {
   try {
     const data = localStorage.getItem('runlog_maintenance');
-    maintenance = data ? JSON.parse(data) : [];
+    if (data) {
+      const parsed = JSON.parse(data);
+      maintenance = Array.isArray(parsed) ? parsed.map(enrichMaintenanceEntry) : [];
+    } else {
+      maintenance = [];
+    }
   } catch (e) {
     console.error('Failed to parse maintenance', e);
     maintenance = [];
   }
 }
 function saveMaintenance() {
+  maintenance = maintenance.map(enrichMaintenanceEntry);
   localStorage.setItem('runlog_maintenance', JSON.stringify(maintenance));
 }
 
-function getNextMaintenanceDates() {
+function getNextMaintenanceSummaries() {
   const latest = {};
-  maintenance.forEach((m) => {
-    if (!latest[m.type] || new Date(latest[m.type]) < new Date(m.date)) {
-      latest[m.type] = m.date;
+  maintenance.forEach((entry) => {
+    if (!entry || !entry.type) return;
+    if (!latest[entry.type] || (latest[entry.type].date || '') < (entry.date || '')) {
+      latest[entry.type] = entry;
     }
   });
-  const result = {};
-  Object.keys(maintenanceIntervals).forEach((type) => {
-    const last = latest[type];
-    if (last) {
-      const d = new Date(last);
-      d.setMonth(d.getMonth() + maintenanceIntervals[type]);
-      result[type] = d.toISOString().slice(0, 10);
+  const summaries = [];
+  Object.entries(maintenanceGuidelines).forEach(([type, preset]) => {
+    const entry = latest[type];
+    if (entry) {
+      summaries.push({ type, message: maintenanceInfoText(entry) });
+      delete latest[type];
     } else {
-      result[type] = '未記録';
+      const fallback = preset.description ? `記録がありません。${preset.description}` : '記録がありません。';
+      summaries.push({ type, message: fallback });
     }
   });
-  return result;
+  Object.entries(latest).forEach(([type, entry]) => {
+    summaries.push({ type, message: maintenanceInfoText(entry) });
+  });
+  return summaries;
 }
 
 function maintenanceRecommendationsHTML() {
-  const next = getNextMaintenanceDates();
-  const items = Object.entries(next)
-    .map(([type, date]) => `<li>${type}: ${date}</li>`)
+  const items = getNextMaintenanceSummaries()
+    .map(({ type, message }) => {
+      const formatted = message.replace(/\s\/\s/g, '<br>');
+      return `
+        <li>
+          <span class="recommend-label">${type}</span>
+          <span class="recommend-date">${formatted}</span>
+        </li>
+      `;
+    })
     .join('');
-  return `<h3>次回メンテナンス目安</h3><ul>${items}</ul>`;
+  return `<div class="maintenance-summary"><h3>次回メンテナンス目安</h3><ul class="maintenance-next-list">${items}</ul></div>`;
 }
 
 // 走行ログ フォーム
@@ -848,6 +986,7 @@ function showMaintenanceList() {
       <h2>メンテナンス</h2>
       <p>記録がありません。「新規メンテナンス」から追加してください。</p>
       <button onclick=\"showMaintenanceForm()\">新規メンテナンス</button>
+      ${maintenanceRecommendationsHTML()}
     `;
     return;
   }
@@ -859,6 +998,7 @@ function showMaintenanceList() {
         <td>${m.odometer}</td>
         <td>${m.cost}</td>
         <td>${m.notes || ''}</td>
+        <td>${maintenanceInfoHTML(m)}</td>
         <td>
           <button onclick=\"showMaintenanceForm(${i})\">編集</button>
           <button onclick=\"deleteMaintenance(${i})\">削除</button>
@@ -880,6 +1020,7 @@ function showMaintenanceList() {
           <th>オドメーター</th>
           <th>費用(円)</th>
           <th>メモ</th>
+          <th>次回目安</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -924,6 +1065,7 @@ function showMaintenanceForm(editIndex = -1) {
         <label for=\"mNotes\">メモ:</label>
         <textarea id=\"mNotes\" rows=\"3\">${m.notes || ''}</textarea>
       </div>
+      <div id=\"mntNextInfo\" class=\"maintenance-next-info\" aria-live=\"polite\">記録後に次回目安が表示されます。</div>
       <div>
         <button type=\"submit\">${editIndex >= 0 ? '保存' : '追加'}</button>
         <button type=\"button\" onclick=\"showMaintenanceList()\">キャンセル</button>
@@ -936,6 +1078,39 @@ function showMaintenanceForm(editIndex = -1) {
     e.preventDefault();
     submitMaintenance(editIndex);
   });
+  const updatePreview = () => {
+    const dateVal = document.getElementById('mDate').value;
+    const typeVal = document.getElementById('mType').value;
+    const odoStr = document.getElementById('mOdo').value;
+    const odo = odoStr === '' ? '' : Number(odoStr);
+    const base = {
+      date: dateVal,
+      type: typeVal,
+      odometer: odoStr === '' || Number.isNaN(odo) ? '' : odo,
+      cost: '',
+      notes: ''
+    };
+    const preview = enrichMaintenanceEntry(base);
+    const el = document.getElementById('mntNextInfo');
+    if (el) {
+      const segments = maintenanceInfoSegments(preview);
+      if (segments.length) {
+        el.innerHTML = segments.join('<br>');
+      } else {
+        const preset = maintenanceGuidelines[typeVal];
+        el.textContent = preset && preset.description
+          ? preset.description
+          : '記録後に次回目安が表示されます。';
+      }
+    }
+  };
+  ['mDate', 'mOdo'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updatePreview);
+  });
+  const typeEl = document.getElementById('mType');
+  if (typeEl) typeEl.addEventListener('change', updatePreview);
+  updatePreview();
 }
 
 function submitMaintenance(editIndex) {
@@ -954,7 +1129,8 @@ function submitMaintenance(editIndex) {
     document.getElementById('mntError').innerText = errors.join('\n');
     return;
   }
-  const entry = { date, type, odometer: odometer === '' ? '' : odometer, cost: cost === '' ? '' : cost, notes };
+  const baseEntry = { date, type, odometer: odometer === '' ? '' : odometer, cost: cost === '' ? '' : cost, notes };
+  const entry = enrichMaintenanceEntry(baseEntry);
   if (editIndex >= 0) maintenance[editIndex] = entry; else maintenance.push(entry);
   saveMaintenance();
   showMaintenanceList();
@@ -973,13 +1149,16 @@ function exportMaintenanceCSV() {
     alert('エクスポートするメンテナンス記録がありません。');
     return;
   }
-  const headers = ['日付','内容','オドメーター','費用(円)','メモ'];
+  const headers = ['日付','内容','オドメーター','費用(円)','メモ','次回目安日','次回目安走行距離(km)','次回サマリー'];
   const rows = maintenance.map((m) => [
     csvEscape(m.date),
     csvEscape(m.type),
     csvEscape(m.odometer),
     csvEscape(m.cost),
-    csvEscape(m.notes || '')
+    csvEscape(m.notes || ''),
+    csvEscape(m.nextDate || ''),
+    csvEscape(typeof m.nextOdo === 'number' && !Number.isNaN(m.nextOdo) ? Math.round(m.nextOdo) : ''),
+    csvEscape(maintenanceInfoText(m))
   ].join(','));
   const csvContent = [headers.join(','), ...rows].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
