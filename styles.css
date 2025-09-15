@@ -30,7 +30,7 @@ nav {
 
 nav button {
   /* Increase padding and font size to create larger, easier to tap controls,
-     following WCAG guidance for a minimum 44×44px touch target【282384608968313†L24-L33】.
+     following WCAG guidance for a minimum 44×44px touch target.
      Use flexbox in the button itself to align the icon and label side by side.
      Larger icons help drivers quickly recognize each function. */
   display: flex;
