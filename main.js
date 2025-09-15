@@ -7,29 +7,35 @@ let maintenance = [];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const maintenanceGuidelines = {
   'オイル交換': {
-    months: 6,
-    distance: 5000,
-    description: '寒冷地ではエンジンオイルの劣化が早いため、半年または5,000kmごとに交換すると安心です。'
+    months: 12,
+    distance: 30000,
+    description: '大型トラックは1年または走行2〜4万kmを目安にエンジンオイルを交換すると安心です。'
+  },
+  'オイルエレメント交換': {
+    months: 12,
+    distance: 30000,
+    description: 'オイルエレメントもエンジンオイル交換と同じタイミング（1年／2〜4万km）での交換が推奨されています。'
   },
   'タイヤ交換': {
-    months: 6,
-    description: '北海道では春（4〜5月）と初冬（10〜11月）に夏冬タイヤを履き替えるのが一般的です。'
+    months: 36,
+    distance: 40000,
+    description: 'トラックタイヤは走行3〜5万kmまたは製造から3〜4年、溝が3.2mmを切る前が交換の目安です。'
   },
   '点検': {
-    months: 6,
-    description: '法定12カ月点検に合わせて、冬前の点検も行うとトラブル防止につながります。'
+    months: 3,
+    description: '車両総重量8トン以上の大型トラックは3カ月ごとの定期点検に加え、1日1回の日常（運行前）点検が義務付けられています。'
   },
   '車検': {
-    months: 24,
-    description: '自家用車は2年ごとに車検。初回のみ3年後ですが、その後は24カ月ごとが基本です。'
+    months: 12,
+    description: '大型トラックの車検有効期間は初回から毎回1年です。'
   },
   'バッテリー交換': {
     months: 36,
-    description: '寒冷地では寿命が短くなりがちなので、3年程度での交換計画が推奨されています。'
+    description: '使用状況によりますがトラック用バッテリーの平均寿命は3〜4年程度です。'
   },
   'ワイパー交換': {
     months: 12,
-    description: '凍結や雪でゴムが傷みやすいので年1回の交換が目安です。'
+    description: 'ワイパーゴムは1年程度、ブレードは1〜2年を目安に状態を確認して交換しましょう。'
   }
 };
 
@@ -1147,7 +1153,182 @@ function csvEscape(value) {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function exportCSV() {
+const FILE_HANDLE_DB_NAME = 'runlog-file-handles';
+const FILE_HANDLE_STORE_NAME = 'handles';
+let fileHandleDbPromise = null;
+
+function supportsFileSystemAccess() {
+  return typeof window !== 'undefined' && 'showSaveFilePicker' in window && 'indexedDB' in window;
+}
+
+function openHandleDB() {
+  if (!supportsFileSystemAccess()) return Promise.resolve(null);
+  if (!fileHandleDbPromise) {
+    fileHandleDbPromise = new Promise((resolve) => {
+      try {
+        const request = indexedDB.open(FILE_HANDLE_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(FILE_HANDLE_STORE_NAME)) {
+            db.createObjectStore(FILE_HANDLE_STORE_NAME);
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch (err) {
+        console.warn('Failed to open handle DB', err);
+        resolve(null);
+      }
+    });
+  }
+  return fileHandleDbPromise;
+}
+
+async function getStoredHandle(key) {
+  const db = await openHandleDB();
+  if (!db) return null;
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_HANDLE_STORE_NAME, 'readonly');
+      const req = tx.objectStore(FILE_HANDLE_STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('Failed to read stored handle', err);
+    return null;
+  }
+}
+
+async function storeHandle(key, handle) {
+  const db = await openHandleDB();
+  if (!db) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_HANDLE_STORE_NAME, 'readwrite');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(FILE_HANDLE_STORE_NAME).put(handle, key);
+    });
+  } catch (err) {
+    console.warn('Failed to store file handle', err);
+  }
+}
+
+async function verifyFilePermission(handle, mode = 'readwrite') {
+  if (!handle || !handle.queryPermission || !handle.requestPermission) return !!handle;
+  try {
+    const state = await handle.queryPermission({ mode });
+    if (state === 'granted') return true;
+    if (state === 'denied') return false;
+    const request = await handle.requestPermission({ mode });
+    return request === 'granted';
+  } catch (err) {
+    console.warn('Failed to verify file permission', err);
+    return false;
+  }
+}
+
+async function getOrCreateFileHandle(key, suggestedName) {
+  if (!supportsFileSystemAccess()) return null;
+  let handle = await getStoredHandle(key);
+  if (handle) {
+    const ok = await verifyFilePermission(handle, 'readwrite');
+    if (ok) return handle;
+  }
+  try {
+    const pickerOpts = {
+      suggestedName,
+      types: [
+        {
+          description: 'CSVファイル',
+          accept: { 'text/csv': ['.csv'] }
+        }
+      ]
+    };
+    const newHandle = await window.showSaveFilePicker(pickerOpts);
+    await storeHandle(key, newHandle);
+    return newHandle;
+  } catch (err) {
+    if (err && err.name === 'AbortError') return null;
+    throw err;
+  }
+}
+
+async function writeFile(handle, content) {
+  const writable = await handle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+function downloadCsvFile(fileName, csvContent) {
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function parseYearFromDate(dateStr) {
+  if (!dateStr) return null;
+  const match = /^(\d{4})/.exec(dateStr);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isNaN(year) ? null : year;
+}
+
+function determineYearFromDates(dates) {
+  const years = dates.map(parseYearFromDate).filter((y) => y !== null);
+  if (years.length === 0) return new Date().getFullYear();
+  const unique = Array.from(new Set(years));
+  if (unique.length === 1) return unique[0];
+  const current = new Date().getFullYear();
+  if (unique.includes(current)) return current;
+  return Math.max(...unique);
+}
+
+function determineLogExportYear() {
+  const dates = [];
+  logs.forEach((log) => {
+    if (log.startDate) dates.push(log.startDate);
+    if (log.endDate) dates.push(log.endDate);
+  });
+  return determineYearFromDates(dates);
+}
+
+function determineMaintenanceExportYear() {
+  const dates = maintenance.map((m) => m.date).filter(Boolean);
+  return determineYearFromDates(dates);
+}
+
+async function saveCsvFile(handleKey, suggestedName, csvContent) {
+  if (!supportsFileSystemAccess()) {
+    downloadCsvFile(suggestedName, csvContent);
+    alert('ブラウザがファイルの上書き保存に対応していないため、ダウンロードで保存しました。');
+    return;
+  }
+  try {
+    const handle = await getOrCreateFileHandle(handleKey, suggestedName);
+    if (!handle) {
+      downloadCsvFile(suggestedName, csvContent);
+      alert('ファイルの保存先が選択されなかったため、ダウンロードで保存しました。');
+      return;
+    }
+    await writeFile(handle, csvContent);
+    alert('CSVファイルを更新しました。');
+  } catch (error) {
+    console.error('Failed to save CSV', error);
+    downloadCsvFile(suggestedName, csvContent);
+    alert('ファイルの更新に失敗したため、ダウンロードで保存しました。');
+  }
+}
+
+async function exportCSV() {
   if (logs.length === 0) {
     alert('エクスポートする記録がありません。');
     return;
@@ -1192,16 +1373,10 @@ function exportCSV() {
     ].join(',');
   });
   const csvContent = [headers.join(','), ...rows].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'runlog.csv';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const year = determineLogExportYear();
+  const fileName = `runlog-${year}.csv`;
+  const handleKey = `runlog_csv_${year}`;
+  await saveCsvFile(handleKey, fileName, csvContent);
 }
 
 // メンテナンス
@@ -1270,12 +1445,13 @@ function showMaintenanceForm(editIndex = -1) {
         <label for=\"mType\">内容:</label>
         <select id=\"mType\">
           <option${m.type === 'オイル交換' ? ' selected' : ''}>オイル交換</option>
+          <option${m.type === 'オイルエレメント交換' ? ' selected' : ''}>オイルエレメント交換</option>
           <option${m.type === 'タイヤ交換' ? ' selected' : ''}>タイヤ交換</option>
           <option${m.type === '点検' ? ' selected' : ''}>点検</option>
           <option${m.type === '車検' ? ' selected' : ''}>車検</option>
           <option${m.type === 'バッテリー交換' ? ' selected' : ''}>バッテリー交換</option>
           <option${m.type === 'ワイパー交換' ? ' selected' : ''}>ワイパー交換</option>
-          <option${m.type && !['オイル交換','タイヤ交換','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
+          <option${m.type && !['オイル交換','オイルエレメント交換','タイヤ交換','点検','車検','バッテリー交換','ワイパー交換'].includes(m.type) ? ' selected' : ''}>その他</option>
         </select>
       </div>
       <div>
@@ -1369,7 +1545,7 @@ function deleteMaintenance(index) {
   }
 }
 
-function exportMaintenanceCSV() {
+async function exportMaintenanceCSV() {
   if (maintenance.length === 0) {
     alert('エクスポートするメンテナンス記録がありません。');
     return;
@@ -1386,16 +1562,10 @@ function exportMaintenanceCSV() {
     csvEscape(maintenanceInfoText(m))
   ].join(','));
   const csvContent = [headers.join(','), ...rows].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'maintenance.csv';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const year = determineMaintenanceExportYear();
+  const fileName = `maintenance-${year}.csv`;
+  const handleKey = `maintenance_csv_${year}`;
+  await saveCsvFile(handleKey, fileName, csvContent);
 }
 
 // Service Worker 登録
