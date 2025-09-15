@@ -34,12 +34,11 @@ self.addEventListener('fetch', (event) => {
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request, { cache: 'no-store' })
-        .catch(() => caches.match('index.html'))
+        .catch(() => caches.match('offline.html'))
     );
   } else {
     event.respondWith(
       fetch(event.request, { cache: 'no-store' })
-        .then((response) => response)
         .catch(() => caches.match(event.request))
     );
   }
