@@ -259,6 +259,43 @@ const eventButtonMap = {
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
 let deferredInstallPrompt = null;
 const CURRENT_TRIP_STORAGE_KEY = 'runlog_currentTrip';
+const LOG_FORM_STORAGE_PREFIX = 'runlog_logFormDraft';
+const MAINTENANCE_FORM_STORAGE_PREFIX = 'runlog_maintenanceDraft';
+
+function getDraftKey(prefix, editIndex) {
+  return editIndex >= 0 ? `${prefix}_edit_${editIndex}` : `${prefix}_new`;
+}
+
+function loadDraft(prefix, editIndex) {
+  try {
+    const key = getDraftKey(prefix, editIndex);
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch (err) {
+    console.warn('Failed to load draft state', prefix, err);
+  }
+  return null;
+}
+
+function saveDraft(prefix, editIndex, payload) {
+  try {
+    const key = getDraftKey(prefix, editIndex);
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch (err) {
+    console.warn('Failed to save draft state', prefix, err);
+  }
+}
+
+function clearDraft(prefix, editIndex) {
+  try {
+    const key = getDraftKey(prefix, editIndex);
+    localStorage.removeItem(key);
+  } catch (err) {
+    console.warn('Failed to clear draft state', prefix, err);
+  }
+}
 
 function updateTripButtonUI() {
   const btn = document.getElementById('toggleTripBtn');
@@ -665,6 +702,61 @@ function maintenanceRecommendationsHTML() {
   return `<div class="maintenance-summary"><h3>次回メンテナンス目安</h3><ul class="maintenance-next-list">${items}</ul></div>`;
 }
 
+function saveLogFormDraft(editIndex) {
+  const form = document.getElementById('logForm');
+  if (!form) return;
+  const getValue = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  const draft = {
+    startDate: getValue('startDate'),
+    startTime: getValue('startTime'),
+    endDate: getValue('endDate'),
+    endTime: getValue('endTime'),
+    purpose: getValue('purpose'),
+    start: getValue('start'),
+    end: getValue('end'),
+    distance: getValue('distance'),
+    cost: getValue('cost'),
+    startOdo: getValue('startOdo'),
+    finalOdo: getValue('finalOdo'),
+    notes: getValue('notes')
+  };
+  saveDraft(LOG_FORM_STORAGE_PREFIX, editIndex, draft);
+}
+
+function restoreLogFormDraft(editIndex) {
+  const draft = loadDraft(LOG_FORM_STORAGE_PREFIX, editIndex);
+  if (!draft) return;
+  const applyValue = (id, key) => {
+    if (!(key in draft)) return;
+    const el = document.getElementById(id);
+    if (el) el.value = draft[key];
+  };
+  applyValue('startDate', 'startDate');
+  applyValue('startTime', 'startTime');
+  applyValue('endDate', 'endDate');
+  applyValue('endTime', 'endTime');
+  applyValue('purpose', 'purpose');
+  applyValue('start', 'start');
+  applyValue('end', 'end');
+  applyValue('distance', 'distance');
+  applyValue('cost', 'cost');
+  applyValue('startOdo', 'startOdo');
+  applyValue('finalOdo', 'finalOdo');
+  applyValue('notes', 'notes');
+}
+
+function clearLogFormDraft(editIndex) {
+  clearDraft(LOG_FORM_STORAGE_PREFIX, editIndex);
+}
+
+function cancelLogForm(editIndex) {
+  clearLogFormDraft(editIndex);
+  showList();
+}
+
 // 走行ログ フォーム
 function showForm(editIndex = -1) {
   const init = {
@@ -741,16 +833,27 @@ function showForm(editIndex = -1) {
       </div>
       <div>
         <button type="submit">${editIndex >= 0 ? '保存' : '追加'}</button>
-        <button type="button" onclick="showList()">キャンセル</button>
+        <button type="button" id="logCancelBtn">キャンセル</button>
       </div>
       <div id="formError" class="error"></div>
     </form>
   `;
   document.getElementById('content').innerHTML = html;
-  document.getElementById('logForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    submitLog(editIndex);
-  });
+  const formEl = document.getElementById('logForm');
+  if (formEl) {
+    formEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitLog(editIndex);
+    });
+    const persist = () => saveLogFormDraft(editIndex);
+    formEl.addEventListener('input', persist);
+    formEl.addEventListener('change', persist);
+  }
+  const cancelBtn = document.getElementById('logCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => cancelLogForm(editIndex));
+  }
+  restoreLogFormDraft(editIndex);
 }
 
 function submitLog(editIndex) {
@@ -808,6 +911,7 @@ function submitLog(editIndex) {
   };
   if (editIndex >= 0) logs[editIndex] = logEntry; else logs.push(logEntry);
   saveLogs();
+  clearLogFormDraft(editIndex);
   showList();
 }
 
@@ -1538,6 +1642,47 @@ function showMaintenanceList() {
   document.getElementById('content').innerHTML = html;
 }
 
+function saveMaintenanceDraft(editIndex) {
+  const form = document.getElementById('mntForm');
+  if (!form) return;
+  const getValue = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  const draft = {
+    date: getValue('mDate'),
+    type: getValue('mType'),
+    odometer: getValue('mOdo'),
+    cost: getValue('mCost'),
+    notes: getValue('mNotes')
+  };
+  saveDraft(MAINTENANCE_FORM_STORAGE_PREFIX, editIndex, draft);
+}
+
+function restoreMaintenanceDraft(editIndex) {
+  const draft = loadDraft(MAINTENANCE_FORM_STORAGE_PREFIX, editIndex);
+  if (!draft) return;
+  const applyValue = (id, key) => {
+    if (!(key in draft)) return;
+    const el = document.getElementById(id);
+    if (el) el.value = draft[key];
+  };
+  applyValue('mDate', 'date');
+  applyValue('mType', 'type');
+  applyValue('mOdo', 'odometer');
+  applyValue('mCost', 'cost');
+  applyValue('mNotes', 'notes');
+}
+
+function clearMaintenanceDraft(editIndex) {
+  clearDraft(MAINTENANCE_FORM_STORAGE_PREFIX, editIndex);
+}
+
+function cancelMaintenanceForm(editIndex) {
+  clearMaintenanceDraft(editIndex);
+  showMaintenanceList();
+}
+
 function showMaintenanceForm(editIndex = -1) {
   const init = { date: timestampToDateString(Date.now()), type: 'オイル交換', odometer: '', cost: '', notes: '' };
   const m = editIndex >= 0 ? { ...maintenance[editIndex] } : init;
@@ -1577,16 +1722,26 @@ function showMaintenanceForm(editIndex = -1) {
       <div id=\"mntNextInfo\" class=\"maintenance-next-info\" aria-live=\"polite\">記録後に次回目安が表示されます。</div>
       <div>
         <button type=\"submit\">${editIndex >= 0 ? '保存' : '追加'}</button>
-        <button type=\"button\" onclick=\"showMaintenanceList()\">キャンセル</button>
+        <button type=\"button\" id=\"mntCancelBtn\">キャンセル</button>
       </div>
       <div id=\"mntError\" class=\"error\"></div>
     </form>
   `;
   document.getElementById('content').innerHTML = html;
-  document.getElementById('mntForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    submitMaintenance(editIndex);
-  });
+  const formEl = document.getElementById('mntForm');
+  if (formEl) {
+    formEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitMaintenance(editIndex);
+    });
+    const persist = () => saveMaintenanceDraft(editIndex);
+    formEl.addEventListener('input', persist);
+    formEl.addEventListener('change', persist);
+  }
+  const cancelBtn = document.getElementById('mntCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => cancelMaintenanceForm(editIndex));
+  }
   const updatePreview = () => {
     const dateVal = document.getElementById('mDate').value;
     const typeVal = document.getElementById('mType').value;
@@ -1619,6 +1774,7 @@ function showMaintenanceForm(editIndex = -1) {
   });
   const typeEl = document.getElementById('mType');
   if (typeEl) typeEl.addEventListener('change', updatePreview);
+  restoreMaintenanceDraft(editIndex);
   updatePreview();
 }
 
@@ -1642,6 +1798,7 @@ function submitMaintenance(editIndex) {
   const entry = enrichMaintenanceEntry(baseEntry);
   if (editIndex >= 0) maintenance[editIndex] = entry; else maintenance.push(entry);
   saveMaintenance();
+  clearMaintenanceDraft(editIndex);
   showMaintenanceList();
 }
 
