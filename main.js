@@ -939,85 +939,204 @@ function mapButton(address, lat, lon) {
   const safeAddr = address.replace(/'/g, "\\'");
   const latStr = lat === null || lat === undefined ? 'null' : lat;
   const lonStr = lon === null || lon === undefined ? 'null' : lon;
-  return ` <button type="button" onclick="openMap('${safeAddr}', ${latStr}, ${lonStr})">地図</button>`;
+  return ` <button type="button" class="inline-button" onclick="openMap('${safeAddr}', ${latStr}, ${lonStr})">地図</button>`;
+}
+
+function formatText(value, fallback = '未入力') {
+  if (value === null || value === undefined) return `<span class="muted">${fallback}</span>`;
+  const str = String(value).trim();
+  return str ? str : `<span class="muted">${fallback}</span>`;
+}
+
+function formatMetric(value, unit = '') {
+  if (value === null || value === undefined || value === '') return '<span class="muted">-</span>';
+  return `${value}${unit}`;
+}
+
+function formatLocation(address, lat, lon) {
+  if (!address) return '<span class="muted">未入力</span>';
+  const normalized = normalizeAddress(address);
+  if (!normalized) return '<span class="muted">未入力</span>';
+  return `${normalized}${mapButton(normalized, lat, lon)}`;
+}
+
+function renderEventList(events, emptyMessage) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
+  }
+  return `
+    <ul class="event-list">
+      ${events
+        .map((ev) => {
+          const parts = [];
+          parts.push(`<span class="event-label">${ev.type || ''}</span>`);
+          const timeRange = ev.startTime
+            ? (ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime)
+            : (ev.endTime || '');
+          if (timeRange) parts.push(`<span class="event-time">${timeRange}</span>`);
+          if (typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0) {
+            const mins = Math.floor(ev.durationSec / 60);
+            const secs = ev.durationSec % 60;
+            parts.push(`<span class="event-duration">${mins}分${secs}秒</span>`);
+          }
+          if (ev.type === '給油') {
+            if (ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null) {
+              parts.push(`<span class="event-meta">${ev.fuelAmount}L</span>`);
+            }
+            if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) {
+              parts.push(`<span class="event-meta">${ev.fuelPrice}円/L</span>`);
+            }
+          }
+          const locationText = ev.location ? normalizeAddress(ev.location) : '';
+          if (locationText) {
+            parts.push(`<span class="event-meta">${locationText}</span>`);
+          }
+          const mapBtn = locationText ? mapButton(locationText, ev.lat, ev.lon) : '';
+          return `<li>${parts.join(' ')}${mapBtn}</li>`;
+        })
+        .join('')}
+    </ul>
+  `;
+}
+
+function renderLogReportCard(log, options = {}) {
+  if (!log) return '';
+  const {
+    index = -1,
+    showActions = false,
+    isCurrent = false,
+    contextLabel = '',
+    events: overrideEvents = null,
+    eventEmptyMessage = null,
+    eventCountSuffix = ''
+  } = options;
+  const events = Array.isArray(overrideEvents) ? overrideEvents : (log.events || []);
+  const startParts = [];
+  if (log.startDate) startParts.push(log.startDate);
+  if (log.startTime) startParts.push(log.startTime);
+  const startLabel = startParts.join(' ');
+  const endParts = [];
+  if (log.endDate) endParts.push(log.endDate);
+  if (log.endTime) endParts.push(log.endTime);
+  const endLabel = endParts.join(' ');
+  let title = '日時未設定';
+  if (startLabel && endLabel) title = `${startLabel} ～ ${endLabel}`;
+  else if (startLabel) title = startLabel;
+  else if (endLabel) title = endLabel;
+  const headerMetaItems = [];
+  if (isCurrent) headerMetaItems.push('<span class="report-badge report-badge--active">運行中</span>');
+  if (contextLabel) headerMetaItems.push(`<span class="report-context">${contextLabel}</span>`);
+  const headerMeta = headerMetaItems.length ? `<div class="report-header-meta">${headerMetaItems.join(' ')}</div>` : '';
+  const notesBlock = log.notes ? `<p class="report-note"><strong>メモ</strong>${log.notes}</p>` : '';
+  const eventsList = renderEventList(events, eventEmptyMessage || 'イベントは記録されていません。');
+  const countBase = events.length ? `${events.length}件` : '記録なし';
+  const eventCountLabel = `${countBase}${eventCountSuffix}`;
+  const actions = showActions && index >= 0
+    ? `
+      <div class="report-footer">
+        <div class="report-actions">
+          <button class="table-action" onclick="showForm(${index})">編集</button>
+          <button class="table-action subtle" onclick="deleteLog(${index})">削除</button>
+        </div>
+      </div>
+    `
+    : '';
+  return `
+    <section class="section-card report-card${isCurrent ? ' report-card--current' : ''}">
+      <div class="report-header">
+        <h3>${title}</h3>
+        ${headerMeta}
+      </div>
+      <dl class="report-details">
+        <div>
+          <dt>目的</dt>
+          <dd>${formatText(log.purpose)}</dd>
+        </div>
+        <div>
+          <dt>出発地</dt>
+          <dd>${formatLocation(log.start, log.startLat, log.startLon)}</dd>
+        </div>
+        <div>
+          <dt>到着地</dt>
+          <dd>${formatLocation(log.end, log.endLat, log.endLon)}</dd>
+        </div>
+        <div>
+          <dt>距離</dt>
+          <dd>${formatMetric(log.distance, 'km')}</dd>
+        </div>
+        <div>
+          <dt>費用</dt>
+          <dd>${formatMetric(log.cost, '円')}</dd>
+        </div>
+        <div>
+          <dt>開始オド</dt>
+          <dd>${formatMetric(log.startOdo, 'km')}</dd>
+        </div>
+        <div>
+          <dt>終了オド</dt>
+          <dd>${formatMetric(log.finalOdo, 'km')}</dd>
+        </div>
+      </dl>
+      ${notesBlock}
+      <div class="report-body">
+        <div class="report-body-header">
+          <h4 class="report-subheading">作業・イベント</h4>
+          <span class="report-body-meta">${eventCountLabel}</span>
+        </div>
+        ${eventsList}
+      </div>
+      ${actions}
+    </section>
+  `;
+}
+
+function renderCurrentTripCard() {
+  if (!currentTripStartTime) return '';
+  const pseudoLog = {
+    startDate: dateToLocalDateString(currentTripStartTime),
+    startTime: currentTripStartTime.toTimeString().slice(0, 5),
+    endDate: '',
+    endTime: '',
+    start: currentTripStartAddress || '',
+    startLat: currentTripStartLat,
+    startLon: currentTripStartLon,
+    end: '',
+    endLat: null,
+    endLon: null,
+    distance: '',
+    cost: '',
+    startOdo: currentTripStartOdo || '',
+    finalOdo: '',
+    purpose: '',
+    notes: '',
+    events: currentTripEvents.slice()
+  };
+  return renderLogReportCard(pseudoLog, {
+    isCurrent: true,
+    eventEmptyMessage: 'まだイベントは記録されていません。'
+  });
 }
 
 function showList() {
+  const container = document.getElementById('content');
+  if (!container) return;
   if (logs.length === 0 && !currentTripStartTime) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
+    container.innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
     return;
   }
-  const tableRows = logs
-    .map((log, index) => {
-      const startAddress = log.start ? normalizeAddress(log.start) : '';
-      const endAddress = log.end ? normalizeAddress(log.end) : '';
-      return `
-      <tr>
-        <td>${log.startDate}</td>
-        <td>${log.startTime}</td>
-        <td>${log.endDate}</td>
-        <td>${log.endTime}</td>
-        <td>${log.startOdo || ''}</td>
-        <td>${log.finalOdo || ''}</td>
-        <td>${log.purpose}</td>
-        <td>${startAddress}</td>
-        <td>${endAddress}</td>
-        <td>${log.distance}</td>
-        <td>${log.cost}</td>
-        <td>${formatEvents(log.events)}</td>
-        <td>
-          <button onclick=\"showForm(${index})\">編集</button>
-          <button onclick=\"deleteLog(${index})\">削除</button>
-        </td>
-      </tr>
-    `;
-    })
+  const cardsHtml = logs
+    .map((log, index) => renderLogReportCard(log, { index, showActions: true }))
     .join('');
-  const currentRow = currentTripStartTime
-    ? `
-      <tr>
-        <td>${dateToLocalDateString(currentTripStartTime)}</td>
-        <td>${currentTripStartTime.toTimeString().slice(0, 5)}</td>
-        <td>-</td>
-        <td>-</td>
-        <td>${currentTripStartOdo || ''}</td>
-        <td>-</td>
-        <td></td>
-        <td>${currentTripStartAddress ? normalizeAddress(currentTripStartAddress) : ''}</td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td>${formatEvents(currentTripEvents)}</td>
-        <td></td>
-      </tr>
-    `
-    : '';
-  const html = `
-    <h2>記録一覧</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>開始日</th>
-          <th>開始時刻</th>
-          <th>終了日</th>
-          <th>終了時刻</th>
-          <th>開始オド</th>
-          <th>終了オド</th>
-          <th>目的</th>
-          <th>出発地</th>
-          <th>到着地</th>
-          <th>距離(km)</th>
-          <th>費用(円)</th>
-          <th>イベント</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${currentRow}${tableRows}
-      </tbody>
-    </table>
+  const currentCard = currentTripStartTime ? renderCurrentTripCard() : '';
+  container.innerHTML = `
+    <div class="view-header">
+      <h2>記録一覧</h2>
+      <p class="view-description">各運行の概要とイベントを日報形式でまとめて表示します。</p>
+    </div>
+    <div class="report-grid">
+      ${currentCard}${cardsHtml}
+    </div>
   `;
-  document.getElementById('content').innerHTML = html;
 }
 
 function deleteLog(index) {
@@ -1120,9 +1239,16 @@ function showRecordsByDate() {
   }
   const options = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
   const html = `
-    <h2>日付別記録</h2>
-    <label for="recordDate">日付:</label>
-    <select id="recordDate">${options}</select>
+    <div class="view-header">
+      <h2>日付別記録</h2>
+      <p class="view-description">指定した日付に該当する運行を日報形式で確認できます。</p>
+    </div>
+    <section class="section-card filter-card">
+      <div class="filter-group">
+        <label for="recordDate">日付</label>
+        <select id="recordDate">${options}</select>
+      </div>
+    </section>
     <div id="recordsByDate"></div>
   `;
   document.getElementById('content').innerHTML = html;
@@ -1137,27 +1263,6 @@ function showRecordsByDate() {
     const fallback = dateStringToUTC(log.startDate);
     return fallback !== null ? fallback : 0;
   }
-  function formatEventForDate(ev) {
-    const parts = [];
-    parts.push(`<strong>${ev.type || ''}</strong>`);
-    const timeRange = ev.startTime
-      ? (ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime)
-      : (ev.endTime || '');
-    if (timeRange) parts.push(timeRange);
-    const durationText = typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0
-      ? `(${Math.floor(ev.durationSec / 60)}分${ev.durationSec % 60}秒)`
-      : '';
-    if (durationText) parts.push(durationText);
-    const extras = [];
-    if (ev.type === '給油') {
-      if (ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null) extras.push(`${ev.fuelAmount}L`);
-      if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) extras.push(`${ev.fuelPrice}円/L`);
-    }
-    const locationText = ev.location ? normalizeAddress(ev.location) : '';
-    if (locationText) extras.push(`${locationText}${mapButton(locationText, ev.lat, ev.lon)}`);
-    if (extras.length) parts.push(extras.join(' / '));
-    return `<li>${parts.join(' ')}</li>`;
-  }
   selectEl.addEventListener('change', update);
   update();
   function update() {
@@ -1169,37 +1274,20 @@ function showRecordsByDate() {
       listEl.innerHTML = '<p>該当する記録がありません。</p>';
       return;
     }
-    const rows = filtered
+    const cards = filtered
       .map((log) => {
-        const startDateTime = [log.startDate, log.startTime].filter(Boolean).join(' ');
-        const endDateTime = [log.endDate, log.endTime].filter(Boolean).join(' ');
-        const startAddress = log.start ? normalizeAddress(log.start) : '';
-        const endAddress = log.end ? normalizeAddress(log.end) : '';
         const eventsForDate = (log.events || []).filter((ev) => eventMatchesDate(ev, log, date));
-        const eventsCell = eventsForDate.length
-          ? `<ul>${eventsForDate.map((ev) => formatEventForDate(ev)).join('')}</ul>`
-          : '<span>該当するイベントはありません。</span>';
-        return `
-        <tr>
-          <td>${startDateTime || ''}</td>
-          <td>${endDateTime || ''}</td>
-          <td>${log.purpose || ''}</td>
-          <td>${startAddress}${mapButton(startAddress, log.startLat, log.startLon)}</td>
-          <td>${endAddress}${mapButton(endAddress, log.endLat, log.endLon)}</td>
-          <td>${log.distance}</td>
-          <td>${log.cost}</td>
-          <td>${eventsCell}</td>
-        </tr>
-      `;
+        return renderLogReportCard(log, {
+          events: eventsForDate,
+          eventEmptyMessage: '該当するイベントはありません。',
+          eventCountSuffix: '（対象日）'
+        });
       })
       .join('');
     listEl.innerHTML = `
-      <table>
-        <thead>
-          <tr><th>開始</th><th>終了</th><th>目的</th><th>出発地</th><th>到着地</th><th>距離(km)</th><th>費用(円)</th><th>作業・イベント</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="report-grid">
+        ${cards}
+      </div>
     `;
   }
 }
