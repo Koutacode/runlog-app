@@ -56,6 +56,36 @@ nav button {
   box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 
+nav .status-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.65rem 1.2rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  border-radius: 4px;
+  background: #fff;
+  color: #1f365c;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  min-width: 8.5rem;
+  box-sizing: border-box;
+}
+
+.status-indicator.status-inactive {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.status-indicator.status-driving {
+  background: #e6f4ff;
+  color: #004a99;
+}
+
+.status-indicator.status-task {
+  background: #fff3d6;
+  color: #7a4b00;
+}
+
 .hidden {
   display: none;
 }
