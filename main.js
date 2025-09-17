@@ -404,7 +404,141 @@ function stopTripDayTicker() {
   updateTripDayDisplay();
 }
 
-const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
+const GEO_HIGH_ACCURACY_OPTIONS = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 };
+const GEO_FALLBACK_OPTIONS = { enableHighAccuracy: false, maximumAge: 60000, timeout: 10000 };
+const GEO_ACCURACY_THRESHOLD_METERS = 50;
+const GEO_WATCH_TIMEOUT_MS = 5000;
+
+function canUseGeolocation() {
+  return typeof navigator !== 'undefined' && navigator.geolocation;
+}
+
+function requestAccuratePosition() {
+  if (!canUseGeolocation()) {
+    return Promise.reject(new Error('Geolocation API is not available.'));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let watchId = null;
+    let timerId = null;
+    let bestPosition = null;
+
+    const cleanup = () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+    };
+
+    const settle = (value, isError = false) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (isError) {
+        reject(value);
+      } else {
+        resolve(value);
+      }
+    };
+
+    const extractAccuracy = (pos) => {
+      if (!pos || !pos.coords || typeof pos.coords.accuracy !== 'number') return null;
+      const accuracy = pos.coords.accuracy;
+      return Number.isFinite(accuracy) ? accuracy : null;
+    };
+
+    const maybeImproveAccuracy = (initialPosition) => {
+      bestPosition = initialPosition;
+      const initialAccuracy = extractAccuracy(initialPosition);
+      if (initialAccuracy === null || initialAccuracy <= GEO_ACCURACY_THRESHOLD_METERS) {
+        settle(initialPosition);
+        return;
+      }
+      watchId = navigator.geolocation.watchPosition(
+        (nextPosition) => {
+          const nextAccuracy = extractAccuracy(nextPosition);
+          const bestAccuracy = extractAccuracy(bestPosition);
+          if (!bestPosition || (nextAccuracy !== null && (bestAccuracy === null || nextAccuracy < bestAccuracy))) {
+            bestPosition = nextPosition;
+          }
+          if (nextAccuracy !== null && nextAccuracy <= GEO_ACCURACY_THRESHOLD_METERS) {
+            settle(nextPosition);
+          }
+        },
+        (watchErr) => {
+          console.warn('High accuracy watch failed', watchErr);
+          if (bestPosition) {
+            settle(bestPosition);
+          } else {
+            settle(watchErr || new Error('Failed to watch position'), true);
+          }
+        },
+        GEO_HIGH_ACCURACY_OPTIONS
+      );
+      timerId = setTimeout(() => {
+        if (bestPosition) {
+          settle(bestPosition);
+        } else {
+          settle(new Error('Timed out while waiting for an accurate position'), true);
+        }
+      }, GEO_WATCH_TIMEOUT_MS);
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        maybeImproveAccuracy(position);
+      },
+      (err) => {
+        console.warn('High accuracy position failed', err);
+        navigator.geolocation.getCurrentPosition(
+          (fallbackPosition) => settle(fallbackPosition),
+          (fallbackErr) => settle(fallbackErr || err, true),
+          GEO_FALLBACK_OPTIONS
+        );
+      },
+      GEO_HIGH_ACCURACY_OPTIONS
+    );
+  });
+}
+
+function fetchReverseGeocodedAddress(lat, lon) {
+  if (typeof lat !== 'number' || Number.isNaN(lat) || typeof lon !== 'number' || Number.isNaN(lon)) {
+    return Promise.resolve('');
+  }
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`;
+  return fetch(url)
+    .then((response) => response.json())
+    .then((data) => (data && data.display_name) || '')
+    .catch((error) => {
+      console.warn('Reverse geocoding failed', error);
+      return '';
+    });
+}
+
+function getAccurateLocation() {
+  if (!canUseGeolocation()) {
+    return Promise.resolve({ address: '', lat: null, lon: null });
+  }
+  return requestAccuratePosition()
+    .then((position) => {
+      const coords = position && position.coords ? position.coords : null;
+      const lat = coords && typeof coords.latitude === 'number' ? coords.latitude : null;
+      const lon = coords && typeof coords.longitude === 'number' ? coords.longitude : null;
+      if (lat === null || lon === null) {
+        return { address: '', lat, lon };
+      }
+      return fetchReverseGeocodedAddress(lat, lon).then((address) => ({ address, lat, lon }));
+    })
+    .catch((error) => {
+      console.warn('Failed to obtain precise location', error);
+      return { address: '', lat: null, lon: null };
+    });
+}
+
 let deferredInstallPrompt = null;
 const CURRENT_TRIP_STORAGE_KEY = 'runlog_currentTrip';
 const LOG_FORM_STORAGE_PREFIX = 'runlog_logFormDraft';
@@ -641,22 +775,12 @@ function toggleTrip() {
       saveCurrentTripState();
     }
     showOverlay();
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
-            .then((r) => r.json())
-            .then((d) => finalizeStart(d.display_name, lat, lon))
-            .catch(() => finalizeStart('', lat, lon));
-        },
-        () => finalizeStart('', null, null),
-        geoOptions
-      );
-    } else {
-      finalizeStart('', null, null);
-    }
+    getAccurateLocation()
+      .then(({ address, lat, lon }) => finalizeStart(address, lat, lon))
+      .catch((error) => {
+        console.warn('Failed to resolve start location', error);
+        finalizeStart('', null, null);
+      });
   } else {
     const endTime = new Date();
     const startDate = currentTripStartTime;
@@ -724,22 +848,12 @@ function toggleTrip() {
       showList();
     }
     showOverlay();
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
-            .then((r) => r.json())
-            .then((d) => finalizeEnd(d.display_name, lat, lon))
-            .catch(() => finalizeEnd('', lat, lon));
-        },
-        () => finalizeEnd('', null, null),
-        geoOptions
-      );
-    } else {
-      finalizeEnd('', null, null);
-    }
+    getAccurateLocation()
+      .then(({ address, lat, lon }) => finalizeEnd(address, lat, lon))
+      .catch((error) => {
+        console.warn('Failed to resolve end location', error);
+        finalizeEnd('', null, null);
+      });
   }
 }
 
@@ -1509,22 +1623,12 @@ function recordEvent(type) {
     updateCurrentStatusDisplay();
     saveCurrentTripState();
   }
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
-          .then((response) => response.json())
-          .then((data) => finalize(data && data.display_name, lat, lon))
-          .catch(() => finalize('', lat, lon));
-      },
-      () => finalize('', null, null),
-      geoOptions
-    );
-  } else {
-    finalize('', null, null);
-  }
+  getAccurateLocation()
+    .then(({ address, lat, lon }) => finalize(address, lat, lon))
+    .catch((error) => {
+      console.warn('Failed to resolve event location', error);
+      finalize('', null, null);
+    });
 }
 
 function finishEvent(jpType) {
@@ -1552,22 +1656,12 @@ function finishEvent(jpType) {
     saveCurrentTripState();
     updateCurrentStatusDisplay();
   }
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
-          .then((response) => response.json())
-          .then((data) => finalize(data && data.display_name, lat, lon))
-          .catch(() => finalize('', lat, lon));
-      },
-      () => finalize('', null, null),
-      geoOptions
-    );
-  } else {
-    finalize('', null, null);
-  }
+  getAccurateLocation()
+    .then(({ address, lat, lon }) => finalize(address, lat, lon))
+    .catch((error) => {
+      console.warn('Failed to resolve event end location', error);
+      finalize('', null, null);
+    });
 }
 
 function recordFuelEvent() {
@@ -1616,22 +1710,12 @@ function recordFuelEvent() {
     saveCurrentTripState();
     updateCurrentStatusDisplay();
   }
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`)
-          .then((response) => response.json())
-          .then((data) => finalize(data && data.display_name, lat, lon))
-          .catch(() => finalize('', lat, lon));
-      },
-      () => finalize('', null, null),
-      geoOptions
-    );
-  } else {
-    finalize('', null, null);
-  }
+  getAccurateLocation()
+    .then(({ address, lat, lon }) => finalize(address, lat, lon))
+    .catch((error) => {
+      console.warn('Failed to resolve fuel event location', error);
+      finalize('', null, null);
+    });
 }
 
 function csvEscape(value) {
