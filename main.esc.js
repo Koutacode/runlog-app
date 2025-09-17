@@ -125,11 +125,15 @@ function loadCurrentTripState() {
     currentTripStartLon = parsed.startLon ?? null;
     currentTripStartOdo = parsed.startOdo || '';
     if (Array.isArray(parsed.events)) {
-      currentTripEvents = parsed.events.map((ev) => ({
-        ...ev,
-        lat: ev.lat ?? null,
-        lon: ev.lon ?? null
-      }));
+      currentTripEvents = parsed.events.map((ev) => {
+        const cargo = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
+        return {
+          ...ev,
+          lat: ev.lat ?? null,
+          lon: ev.lon ?? null,
+          cargo
+        };
+      });
     } else {
       currentTripEvents = [];
     }
@@ -562,6 +566,7 @@ function loadLogs() {
         if (durationSec === '' && startTimestamp !== null && endTimestamp !== null) {
           durationSec = Math.round((endTimestamp - startTimestamp) / 1000);
         }
+        const cargo = typeof e.cargo === 'string' ? e.cargo.trim() : '';
         return {
           type: e.type || '',
           startTime: e.startTime || e.time || '',
@@ -571,6 +576,7 @@ function loadLogs() {
           lon: e.lon !== undefined ? e.lon : null,
           fuelAmount: e.fuelAmount || '',
           fuelPrice: e.fuelPrice || '',
+          cargo,
           startTimestamp,
           endTimestamp,
           durationSec
@@ -814,6 +820,10 @@ function formatEvents(events) {
     const fuel = ev.type === '給油' && ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
     const meta = [];
     if (fuel) meta.push(`<span class="event-meta">${fuel}</span>`);
+    if (ev.type === '積み込み') {
+      const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
+      if (cargoText) meta.push(`<span class="event-meta">荷物: ${cargoText}</span>`);
+    }
     if (time) meta.push(`<span class="event-time">${time}</span>`);
     if (durationLabel) meta.push(`<span class="event-duration">${durationLabel}</span>`);
     const locationText = ev.location ? normalizeAddress(ev.location) : '';
@@ -885,6 +895,12 @@ function renderEventList(events, emptyMessage) {
             }
             if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) {
               parts.push(`<span class="event-meta">${ev.fuelPrice}円/L</span>`);
+            }
+          }
+          if (ev.type === '積み込み') {
+            const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
+            if (cargoText) {
+              parts.push(`<span class="event-meta">荷物: ${cargoText}</span>`);
             }
           }
           const locationText = ev.location ? normalizeAddress(ev.location) : '';
@@ -1308,6 +1324,13 @@ function recordEvent(type) {
     alert(`${jpType} は既に記録中です。`);
     return;
   }
+  let cargoDescription = '';
+  if (type === 'Load') {
+    const cargoInput = prompt('積み込んだ内容（任意）:');
+    if (cargoInput !== null) {
+      cargoDescription = cargoInput.trim();
+    }
+  }
   showOverlay();
   function finalize(addr, lat, lon) {
     hideOverlay();
@@ -1321,6 +1344,7 @@ function recordEvent(type) {
       lon: lon !== undefined ? lon : null,
       fuelAmount: '',
       fuelPrice: '',
+      cargo: cargoDescription,
       startTimestamp: eventTime.getTime(),
       endTimestamp: null,
       durationSec: 0
@@ -1788,6 +1812,10 @@ function buildLogExportMatrix() {
           let s = `${ev.startTime || ''}`;
           if (ev.endTime) s += `～${ev.endTime}`;
           s += ` ${ev.type || ''}`;
+          if (ev.type === '積み込み') {
+            const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
+            if (cargoText) s += ` [荷物: ${cargoText}]`;
+          }
           const location = normalizeAddress(ev.location || '');
           if (location) s += `(${location})`;
           if (ev.type === '給油') {
@@ -2207,7 +2235,6 @@ function applyJapaneseLabels() {
   if (h1) h1.textContent = '運行管理(K)';
   const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
   setText('toggleLabel', '運行開始');
-  setText('btnNewLog', '新規記録');
   setText('btnList', '一覧');
   setText('btnSummary', '集計');
   setText('btnByDate', '日付別');
