@@ -55,6 +55,7 @@ let currentTripStartOdo = '';
 const eventButtonMap = {
   '積み込み': { id: 'btnLoad', start: '積み込み', code: 'Load' },
   '荷下ろし': { id: 'btnUnload', start: '荷下ろし', code: 'Unload' },
+  '乗船': { id: 'btnBoard', start: '乗船', end: '下船', code: 'Board' },
   '休憩': { id: 'btnBreak', start: '休憩', code: 'Break' },
   '休息': { id: 'btnRest', start: '休息', code: 'Rest' }
 };
@@ -372,7 +373,8 @@ function updateEventButton(jpType, ongoing) {
   const btn = document.getElementById(map.id);
   if (!btn) return;
   if (ongoing) {
-    btn.textContent = '終了';
+    const endLabel = map.end ?? '終了';
+    btn.textContent = endLabel;
     btn.disabled = false;
     btn.onclick = () => finishEvent(jpType);
   } else {
@@ -1317,7 +1319,7 @@ function recordEvent(type) {
   }
   const eventTime = new Date();
   const timeStr = eventTime.toTimeString().slice(0, 5);
-  const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Break': '休憩', 'Rest': '休息' };
+  const map = { 'Load': '積み込み', 'Unload': '荷下ろし', 'Board': '乗船', 'Break': '休憩', 'Rest': '休息' };
   const jpType = map[type] || type;
   const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
   if (ongoing) {
@@ -2243,6 +2245,7 @@ function applyJapaneseLabels() {
   setText('btnMaintenance', '整備記録');
   setText('btnLoad', '積み込み');
   setText('btnUnload', '荷下ろし');
+  setText('btnBoard', '乗船');
   setText('btnFuel', '給油');
   setText('btnBreak', '休憩');
   setText('btnRest', '休息');
