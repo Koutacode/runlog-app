@@ -61,6 +61,94 @@ const eventButtonMap = {
 
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
 let deferredInstallPrompt = null;
+const CURRENT_TRIP_STORAGE_KEY = 'runlog_currentTrip';
+
+function updateTripButtonUI() {
+  const btn = document.getElementById('toggleTripBtn');
+  const label = document.getElementById('toggleLabel');
+  if (!btn || !label) return;
+  if (currentTripStartTime) {
+    label.textContent = '運行終了';
+    btn.classList.remove('start');
+    btn.classList.add('stop');
+  } else {
+    label.textContent = '運行開始';
+    btn.classList.remove('stop');
+    btn.classList.add('start');
+  }
+}
+
+function clearCurrentTripState() {
+  try {
+    localStorage.removeItem(CURRENT_TRIP_STORAGE_KEY);
+  } catch (err) {
+    console.warn('Failed to clear current trip state', err);
+  }
+}
+
+function saveCurrentTripState() {
+  if (!currentTripStartTime) {
+    clearCurrentTripState();
+    return;
+  }
+  try {
+    const payload = {
+      startTime: currentTripStartTime.getTime(),
+      startAddress: currentTripStartAddress || '',
+      startLat: currentTripStartLat === undefined ? null : currentTripStartLat,
+      startLon: currentTripStartLon === undefined ? null : currentTripStartLon,
+      startOdo: currentTripStartOdo || '',
+      events: currentTripEvents.map((ev) => ({
+        ...ev,
+        lat: ev.lat === undefined ? null : ev.lat,
+        lon: ev.lon === undefined ? null : ev.lon
+      }))
+    };
+    localStorage.setItem(CURRENT_TRIP_STORAGE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    console.warn('Failed to save current trip state', err);
+  }
+}
+
+function loadCurrentTripState() {
+  try {
+    const stored = localStorage.getItem(CURRENT_TRIP_STORAGE_KEY);
+    if (!stored) return;
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') return;
+    if (typeof parsed.startTime !== 'number' || Number.isNaN(parsed.startTime)) return;
+    const startDate = new Date(parsed.startTime);
+    if (Number.isNaN(startDate.getTime())) return;
+    currentTripStartTime = startDate;
+    currentTripStartAddress = parsed.startAddress || '';
+    currentTripStartLat = parsed.startLat ?? null;
+    currentTripStartLon = parsed.startLon ?? null;
+    currentTripStartOdo = parsed.startOdo || '';
+    if (Array.isArray(parsed.events)) {
+      currentTripEvents = parsed.events.map((ev) => ({
+        ...ev,
+        lat: ev.lat ?? null,
+        lon: ev.lon ?? null
+      }));
+    } else {
+      currentTripEvents = [];
+    }
+  } catch (err) {
+    console.warn('Failed to load current trip state', err);
+    clearCurrentTripState();
+  }
+}
+
+function restoreEventButtonStates() {
+  resetEventButtons();
+  if (!currentTripStartTime) return;
+  Object.keys(eventButtonMap).forEach((jpType) => {
+    const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
+    if (ongoing) {
+      updateEventButton(jpType, true);
+    }
+  });
+}
 
 function normalizeAddress(address) {
   if (!address) return '';
@@ -116,6 +204,11 @@ function timestampToDateString(timestamp) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function dateToLocalDateString(date) {
+  if (!(date instanceof Date)) return '';
+  return timestampToDateString(date.getTime());
 }
 
 function addMonthsToDateString(dateStr, months) {
@@ -315,10 +408,12 @@ function toggleTrip() {
     currentTripStartTime = new Date();
     currentTripStartAddress = '';
     currentTripStartOdo = '';
+    currentTripEvents = [];
     const startOdoStr = prompt('開始オドメーター（任意）:');
     currentTripStartOdo = startOdoStr ? startOdoStr.trim() : '';
     currentTripStartLat = null;
     currentTripStartLon = null;
+    saveCurrentTripState();
     const startTimeStr = currentTripStartTime.toTimeString().slice(0, 5);
     const label = document.getElementById('toggleLabel');
     if (label) label.textContent = '運行終了';
@@ -326,6 +421,7 @@ function toggleTrip() {
       btn.classList.remove('start');
       btn.classList.add('stop');
     }
+    updateTripButtonUI();
     resetEventButtons();
     function finalizeStart(addr, lat, lon) {
       hideOverlay();
@@ -345,6 +441,7 @@ function toggleTrip() {
         endTimestamp: null,
         durationSec: 0
       });
+      saveCurrentTripState();
     }
     showOverlay();
     if (navigator.geolocation) {
@@ -366,9 +463,9 @@ function toggleTrip() {
   } else {
     const endTime = new Date();
     const startDate = currentTripStartTime;
-    const startDateStr = startDate.toISOString().slice(0, 10);
+    const startDateStr = dateToLocalDateString(startDate);
     const startTimeStr = startDate.toTimeString().slice(0, 5);
-    const endDateStr = endTime.toISOString().slice(0, 10);
+    const endDateStr = dateToLocalDateString(endTime);
     const endTimeStr = endTime.toTimeString().slice(0, 5);
     const finalOdoStr = prompt('最終オドメーター（任意）:');
     const finalOdo = finalOdoStr ? finalOdoStr.trim() : '';
@@ -415,12 +512,14 @@ function toggleTrip() {
       currentTripStartOdo = '';
       currentTripStartLat = null;
       currentTripStartLon = null;
+      clearCurrentTripState();
       const label = document.getElementById('toggleLabel');
       if (label) label.textContent = '運行開始';
       if (btn) {
         btn.classList.remove('stop');
         btn.classList.add('start');
       }
+      updateTripButtonUI();
       resetEventButtons();
       showList();
     }
@@ -581,7 +680,7 @@ function showForm(editIndex = -1) {
   if (editIndex >= 0) {
     log = { ...logs[editIndex] };
   } else {
-    log.startDate = new Date().toISOString().slice(0, 10);
+    log.startDate = timestampToDateString(Date.now());
     log.endDate = log.startDate;
   }
   const html = `
@@ -798,7 +897,7 @@ function showList() {
   let currentRow = '';
   let activeNotice = '';
   if (currentTripStartTime) {
-    const startDate = currentTripStartTime.toISOString().slice(0, 10);
+    const startDate = dateToLocalDateString(currentTripStartTime);
     const startTime = currentTripStartTime.toTimeString().slice(0, 5);
     const startAddress = currentTripStartAddress ? normalizeAddress(currentTripStartAddress) : '';
     const startCell = startAddress
@@ -1027,7 +1126,7 @@ function showRecordsByDate() {
       to = tmp;
     }
     for (let ts = from; ts <= to; ts += DAY_MS) {
-      const dateStr = new Date(ts).toISOString().slice(0, 10);
+      const dateStr = timestampToDateString(ts);
       dateSet.add(dateStr);
     }
   });
@@ -1201,6 +1300,7 @@ function recordEvent(type) {
     };
     currentTripEvents.push(eventObj);
     updateEventButton(jpType, true);
+    saveCurrentTripState();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -1241,6 +1341,7 @@ function finishEvent(jpType) {
       ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
     }
     updateEventButton(jpType, false);
+    saveCurrentTripState();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -1301,6 +1402,7 @@ function recordFuelEvent() {
     if (lat !== null && lat !== undefined) eventObj.lat = lat;
     if (lon !== null && lon !== undefined) eventObj.lon = lon;
     currentTripEvents.push(eventObj);
+    saveCurrentTripState();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -1636,7 +1738,7 @@ function showMaintenanceList() {
 }
 
 function showMaintenanceForm(editIndex = -1) {
-  const init = { date: new Date().toISOString().slice(0, 10), type: 'オイル交換', odometer: '', cost: '', notes: '' };
+  const init = { date: timestampToDateString(Date.now()), type: 'オイル交換', odometer: '', cost: '', notes: '' };
   const m = editIndex >= 0 ? { ...maintenance[editIndex] } : init;
   const html = `
     <h2>${editIndex >= 0 ? 'メンテナンス編集' : '新規メンテナンス'}</h2>
@@ -1813,8 +1915,11 @@ window.addEventListener('appinstalled', () => {
 window.addEventListener('load', () => {
   loadLogs();
   loadMaintenance();
+  loadCurrentTripState();
   applyJapaneseLabels();
   applyDeviceClass();
+  updateTripButtonUI();
+  restoreEventButtonStates();
   showList();
   registerServiceWorker();
   setupInstallButton();
