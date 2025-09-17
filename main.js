@@ -249,6 +249,8 @@ let currentTripStartLat = null;
 let currentTripStartLon = null;
 let currentTripStartOdo = '';
 
+const DRIVING_EVENT_TYPE = '走行中';
+
 const eventButtonMap = {
   '積み込み': { id: 'btnLoad', start: '積み込み', code: 'Load' },
   '荷下ろし': { id: 'btnUnload', start: '荷下ろし', code: 'Unload' },
@@ -256,6 +258,84 @@ const eventButtonMap = {
   '休憩': { id: 'btnBreak', start: '休憩', code: 'Break' },
   '休息': { id: 'btnRest', start: '休息', code: 'Rest' }
 };
+
+function findLatestOngoingEvent(type) {
+  return [...currentTripEvents].reverse().find((ev) => ev && ev.type === type && !ev.endTime);
+}
+
+function findOngoingTaskEvent() {
+  return [...currentTripEvents].reverse().find((ev) => {
+    if (!ev || ev.endTime) return false;
+    if (ev.type === DRIVING_EVENT_TYPE) return false;
+    if (ev.type === '運行開始' || ev.type === '運行終了') return false;
+    return true;
+  });
+}
+
+function startDrivingSegment(timestamp = Date.now()) {
+  if (!currentTripStartTime) return;
+  const existing = findLatestOngoingEvent(DRIVING_EVENT_TYPE);
+  if (existing) return;
+  const activeTask = findOngoingTaskEvent();
+  if (activeTask) return;
+  const startMs = (typeof timestamp === 'number' && !Number.isNaN(timestamp)) ? timestamp : Date.now();
+  const startDate = new Date(startMs);
+  const startLabel = Number.isNaN(startDate.getTime()) ? '' : startDate.toTimeString().slice(0, 5);
+  currentTripEvents.push({
+    type: DRIVING_EVENT_TYPE,
+    startTime: startLabel,
+    endTime: '',
+    location: '',
+    lat: null,
+    lon: null,
+    fuelAmount: '',
+    fuelPrice: '',
+    cargo: '',
+    startTimestamp: startMs,
+    endTimestamp: null,
+    durationSec: 0
+  });
+  updateCurrentStatusDisplay();
+}
+
+function stopDrivingSegment(timestamp = Date.now()) {
+  const ongoing = findLatestOngoingEvent(DRIVING_EVENT_TYPE);
+  if (!ongoing) return;
+  const endMs = (typeof timestamp === 'number' && !Number.isNaN(timestamp)) ? timestamp : Date.now();
+  const endDate = new Date(endMs);
+  ongoing.endTime = Number.isNaN(endDate.getTime()) ? '' : endDate.toTimeString().slice(0, 5);
+  ongoing.endTimestamp = endMs;
+  if (typeof ongoing.startTimestamp !== 'number' || Number.isNaN(ongoing.startTimestamp)) {
+    ongoing.startTimestamp = endMs;
+    ongoing.durationSec = 0;
+  } else {
+    const diff = Math.max(0, Math.round((endMs - ongoing.startTimestamp) / 1000));
+    ongoing.durationSec = diff;
+  }
+}
+
+function updateCurrentStatusDisplay() {
+  const indicator = document.getElementById('statusIndicator');
+  if (!indicator) return;
+  let label = '停止中';
+  let statusClass = 'status-inactive';
+  if (currentTripStartTime) {
+    const activeTask = findOngoingTaskEvent();
+    if (activeTask) {
+      const cargoText = activeTask.type === '積み込み' && typeof activeTask.cargo === 'string'
+        ? activeTask.cargo.trim()
+        : '';
+      label = cargoText ? `${activeTask.type}（${cargoText}）` : activeTask.type;
+      statusClass = 'status-task';
+    } else {
+      label = DRIVING_EVENT_TYPE;
+      statusClass = 'status-driving';
+    }
+  }
+  indicator.textContent = label;
+  indicator.classList.remove('status-inactive', 'status-driving', 'status-task');
+  indicator.classList.add(statusClass);
+}
 
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
 let deferredInstallPrompt = null;
@@ -380,13 +460,17 @@ function loadCurrentTripState() {
 
 function restoreEventButtonStates() {
   resetEventButtons();
-  if (!currentTripStartTime) return;
+  if (!currentTripStartTime) {
+    updateCurrentStatusDisplay();
+    return;
+  }
   Object.keys(eventButtonMap).forEach((jpType) => {
     const ongoing = [...currentTripEvents].reverse().find((ev) => ev.type === jpType && !ev.endTime);
     if (ongoing) {
       updateEventButton(jpType, true);
     }
   });
+  updateCurrentStatusDisplay();
 }
 
 window.addEventListener('beforeunload', (e) => {
@@ -452,6 +536,7 @@ function toggleTrip() {
     currentTripStartAddress = '';
     currentTripStartOdo = '';
     currentTripEvents = [];
+    updateCurrentStatusDisplay();
     const startOdoStr = prompt('開始オドメーター（任意）:');
     currentTripStartOdo = startOdoStr ? startOdoStr.trim() : '';
     currentTripStartLat = null;
@@ -484,6 +569,7 @@ function toggleTrip() {
         endTimestamp: null,
         durationSec: 0
       });
+      startDrivingSegment(currentTripStartTime.getTime());
       saveCurrentTripState();
     }
     showOverlay();
@@ -516,6 +602,7 @@ function toggleTrip() {
       hideOverlay();
       const endAddr = normalizeAddress(addr || '');
       const eventTimestamp = endTime.getTime();
+      stopDrivingSegment(eventTimestamp);
       currentTripEvents.push({
         type: '運行終了',
         startTime: endTimeStr,
@@ -555,6 +642,7 @@ function toggleTrip() {
       currentTripStartOdo = '';
       currentTripStartLat = null;
       currentTripStartLon = null;
+      updateCurrentStatusDisplay();
       clearCurrentTripState();
       const label = document.getElementById('toggleLabel');
       if (label) label.textContent = '運行開始';
@@ -1324,15 +1412,15 @@ function recordEvent(type) {
   }
   let cargoDescription = '';
   if (type === 'Load') {
-    const cargoInput = prompt('積み込んだ内容（任意）:');
-    if (cargoInput !== null) {
-      cargoDescription = cargoInput.trim();
-    }
+    const cargoInput = prompt('積み込んだ内容を入力してください（キャンセルで中止）:');
+    if (cargoInput === null) return;
+    cargoDescription = cargoInput.trim();
   }
   showOverlay();
   function finalize(addr, lat, lon) {
     hideOverlay();
     const location = normalizeAddress(addr || '');
+    stopDrivingSegment(eventTime.getTime());
     const eventObj = {
       type: jpType,
       startTime: timeStr,
@@ -1349,6 +1437,7 @@ function recordEvent(type) {
     };
     currentTripEvents.push(eventObj);
     updateEventButton(jpType, true);
+    updateCurrentStatusDisplay();
     saveCurrentTripState();
   }
   if (navigator.geolocation) {
@@ -1390,7 +1479,9 @@ function finishEvent(jpType) {
       ongoing.durationSec = Math.round((ongoing.endTimestamp - ongoing.startTimestamp) / 1000);
     }
     updateEventButton(jpType, false);
+    startDrivingSegment(eventTime.getTime());
     saveCurrentTripState();
+    updateCurrentStatusDisplay();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -1450,8 +1541,11 @@ function recordFuelEvent() {
     if (location) eventObj.location = location;
     if (lat !== null && lat !== undefined) eventObj.lat = lat;
     if (lon !== null && lon !== undefined) eventObj.lon = lon;
+    stopDrivingSegment(eventTime.getTime());
     currentTripEvents.push(eventObj);
+    startDrivingSegment(eventTime.getTime());
     saveCurrentTripState();
+    updateCurrentStatusDisplay();
   }
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
@@ -2274,4 +2368,5 @@ function applyJapaneseLabels() {
   setText('btnFuel', '給油');
   setText('btnBreak', '休憩');
   setText('btnRest', '休息');
+  setText('statusIndicator', '停止中');
 }
