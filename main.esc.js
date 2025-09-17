@@ -1530,8 +1530,13 @@ async function verifyFilePermission(handle, mode = 'readwrite') {
   }
 }
 
-async function getOrCreateFileHandle(key, suggestedName) {
+async function getOrCreateFileHandle(key, suggestedName, options = {}) {
   if (!supportsFileSystemAccess()) return null;
+  const {
+    description = 'CSVファイル',
+    mimeType = 'text/csv',
+    extensions = ['.csv']
+  } = options;
   let handle = await getStoredHandle(key);
   if (handle) {
     const ok = await verifyFilePermission(handle, 'readwrite');
@@ -1542,8 +1547,8 @@ async function getOrCreateFileHandle(key, suggestedName) {
       suggestedName,
       types: [
         {
-          description: 'CSVファイル',
-          accept: { 'text/csv': ['.csv'] }
+          description,
+          accept: { [mimeType]: extensions }
         }
       ]
     };
@@ -1562,8 +1567,8 @@ async function writeFile(handle, content) {
   await writable.close();
 }
 
-function downloadCsvFile(fileName, csvContent) {
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+function downloadTextFile(fileName, content, mimeType = 'text/plain;charset=utf-8;') {
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1607,26 +1612,235 @@ function determineMaintenanceExportYear() {
   return determineYearFromDates(dates);
 }
 
-async function saveCsvFile(handleKey, suggestedName, csvContent) {
+async function saveTextFile(handleKey, suggestedName, content, options = {}) {
+  const {
+    description = 'テキストファイル',
+    mimeType = 'text/plain',
+    extensions = ['.txt'],
+    successMessage = 'ファイルを更新しました。',
+    fallbackMessage = 'ブラウザがファイルの上書き保存に対応していないため、ダウンロードで保存しました。',
+    cancelMessage = 'ファイルの保存先が選択されなかったため、ダウンロードで保存しました。',
+    errorMessage = 'ファイルの更新に失敗したため、ダウンロードで保存しました。',
+    errorLogLabel = 'Failed to save file',
+    downloadMimeType = `${mimeType};charset=utf-8;`
+  } = options;
   if (!supportsFileSystemAccess()) {
-    downloadCsvFile(suggestedName, csvContent);
-    alert('ブラウザがファイルの上書き保存に対応していないため、ダウンロードで保存しました。');
-    return;
+    downloadTextFile(suggestedName, content, downloadMimeType);
+    if (fallbackMessage) alert(fallbackMessage);
+    return 'downloaded';
   }
   try {
-    const handle = await getOrCreateFileHandle(handleKey, suggestedName);
+    const handle = await getOrCreateFileHandle(handleKey, suggestedName, { description, mimeType, extensions });
     if (!handle) {
-      downloadCsvFile(suggestedName, csvContent);
-      alert('ファイルの保存先が選択されなかったため、ダウンロードで保存しました。');
-      return;
+      downloadTextFile(suggestedName, content, downloadMimeType);
+      if (cancelMessage) alert(cancelMessage);
+      return 'downloaded';
     }
-    await writeFile(handle, csvContent);
-    alert('CSVファイルを更新しました。');
+    await writeFile(handle, content);
+    if (successMessage) alert(successMessage);
+    return 'saved';
   } catch (error) {
-    console.error('Failed to save CSV', error);
-    downloadCsvFile(suggestedName, csvContent);
-    alert('ファイルの更新に失敗したため、ダウンロードで保存しました。');
+    console.error(errorLogLabel, error);
+    downloadTextFile(suggestedName, content, downloadMimeType);
+    if (errorMessage) alert(errorMessage);
+    return 'downloaded';
   }
+}
+
+function sanitizeTableValue(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/\r?\n/g, ' / ').replace(/\t/g, ' ').trim();
+}
+
+function buildTableContent(headers, rows) {
+  const sanitizedHeaders = headers.map(sanitizeTableValue);
+  const columnCount = sanitizedHeaders.length;
+  const sanitizedRows = rows.map((row) => {
+    const cells = [];
+    for (let i = 0; i < columnCount; i += 1) {
+      const cell = i < row.length ? row[i] : '';
+      cells.push(sanitizeTableValue(cell));
+    }
+    return cells;
+  });
+  const widths = sanitizedHeaders.map((cell) => cell.length);
+  sanitizedRows.forEach((row) => {
+    row.forEach((cell, index) => {
+      if (cell.length > widths[index]) widths[index] = cell.length;
+    });
+  });
+  const buildBorder = (char) => `+${widths.map((width) => char.repeat(width + 2)).join('+')}+`;
+  const formatRow = (row) => `|${row.map((cell, index) => ` ${cell.padEnd(widths[index])} `).join('|')}|`;
+  const lines = [];
+  const headerBorder = buildBorder('-');
+  const headerSeparator = buildBorder('=');
+  lines.push(headerBorder);
+  lines.push(formatRow(sanitizedHeaders));
+  lines.push(headerSeparator);
+  if (sanitizedRows.length === 0) {
+    lines.push(headerBorder);
+  } else {
+    sanitizedRows.forEach((row) => {
+      lines.push(formatRow(row));
+      lines.push(headerBorder);
+    });
+  }
+  return lines.join('\n');
+}
+
+function buildCsvContent(headers, rows) {
+  const headerLine = headers.map((value) => csvEscape(value)).join(',');
+  const dataLines = rows.map((row) => row.map((cell) => csvEscape(cell)).join(','));
+  return [headerLine, ...dataLines].join('\r\n');
+}
+
+const EXPORT_FORMATS = {
+  CSV: 'csv',
+  TABLE: 'table',
+  BOTH: 'both'
+};
+
+function describeExportFormat(format) {
+  switch (format) {
+    case EXPORT_FORMATS.CSV:
+      return 'CSV（Excel等向け）';
+    case EXPORT_FORMATS.TABLE:
+      return '罫線付きテキスト（表形式）';
+    case EXPORT_FORMATS.BOTH:
+      return 'CSVと罫線付きテキスト';
+    default:
+      return '';
+  }
+}
+
+function readExportFormatPreference(key) {
+  try {
+    const value = localStorage.getItem(key);
+    if (value === EXPORT_FORMATS.CSV || value === EXPORT_FORMATS.TABLE || value === EXPORT_FORMATS.BOTH) {
+      return value;
+    }
+  } catch (error) {
+    console.warn('Failed to read export format preference', error);
+  }
+  return null;
+}
+
+function storeExportFormatPreference(key, value) {
+  try {
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch (error) {
+    console.warn('Failed to store export format preference', error);
+  }
+}
+
+function promptExportFormat(storageKey, title) {
+  const saved = readExportFormatPreference(storageKey);
+  if (saved) {
+    const change = window.confirm(`${title}\n現在の出力形式は${describeExportFormat(saved)}です。変更しますか？\nOK: 変更する / キャンセル: このまま`);
+    if (!change) return saved;
+    storeExportFormatPreference(storageKey, null);
+  }
+  while (true) {
+    const input = window.prompt(
+      `${title}\n1: CSV（Excel等向け）\n2: 罫線付きテキスト（表形式）\n3: CSVと罫線付きテキストを両方保存\nキャンセル: 中止`,
+      '1'
+    );
+    if (input === null) return null;
+    const trimmed = input.trim();
+    let format = null;
+    if (trimmed === '1') format = EXPORT_FORMATS.CSV;
+    else if (trimmed === '2') format = EXPORT_FORMATS.TABLE;
+    else if (trimmed === '3') format = EXPORT_FORMATS.BOTH;
+    if (format) {
+      const remember = window.confirm('次回からもこの形式を使用しますか？\nOK: 記憶する / キャンセル: 毎回選択');
+      if (remember) storeExportFormatPreference(storageKey, format);
+      else storeExportFormatPreference(storageKey, null);
+      return format;
+    }
+    alert('1〜3の番号を入力してください。');
+  }
+}
+
+function summarizeExportResults(results, contextLabel = '') {
+  if (!results || results.length === 0) return;
+  const prefix = contextLabel ? `${contextLabel}の` : '';
+  const messages = results.map((result) => {
+    const label = result.label || '';
+    if (result.outcome === 'saved') {
+      return `${prefix}${label}ファイルを更新しました。`;
+    }
+    return `${prefix}${label}ファイルはダウンロードで保存しました。`;
+  });
+  alert(messages.join('\n'));
+}
+
+function buildLogExportMatrix() {
+  const headers = ['開始日','開始時刻','終了日','終了時刻','開始オドメーター','最終オドメーター','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント'];
+  const rows = logs.map((log) => {
+    let eventsStr = '';
+    if (log.events && log.events.length) {
+      eventsStr = log.events
+        .map((ev) => {
+          let s = `${ev.startTime || ''}`;
+          if (ev.endTime) s += `～${ev.endTime}`;
+          s += ` ${ev.type || ''}`;
+          const location = normalizeAddress(ev.location || '');
+          if (location) s += `(${location})`;
+          if (ev.type === '給油') {
+            const amount = ev.fuelAmount !== '' && ev.fuelAmount !== undefined ? `${ev.fuelAmount}L` : '';
+            const price = ev.fuelPrice !== '' && ev.fuelPrice !== undefined ? `${ev.fuelPrice}円/L` : '';
+            const details = [amount, price].filter(Boolean).join(', ');
+            if (details) s += `:${details}`;
+          }
+          return s.trim();
+        })
+        .join('; ');
+    }
+    const startAddress = normalizeAddress(log.start || '');
+    const endAddress = normalizeAddress(log.end || '');
+    const distance = log.distance === undefined || log.distance === null ? '' : log.distance;
+    const cost = log.cost === undefined || log.cost === null ? '' : log.cost;
+    return [
+      log.startDate || '',
+      log.startTime || '',
+      log.endDate || '',
+      log.endTime || '',
+      log.startOdo || '',
+      log.finalOdo || '',
+      log.purpose || '',
+      startAddress,
+      endAddress,
+      distance,
+      cost,
+      log.notes || '',
+      eventsStr
+    ];
+  });
+  return { headers, rows };
+}
+
+function buildMaintenanceExportMatrix() {
+  const headers = ['日付','内容','オドメーター','費用(円)','メモ','次回目安日','次回目安走行距離(km)','次回サマリー'];
+  const rows = maintenance.map((m) => {
+    const odometer = m.odometer === undefined || m.odometer === null ? '' : m.odometer;
+    const cost = m.cost === undefined || m.cost === null ? '' : m.cost;
+    const nextOdo = typeof m.nextOdo === 'number' && !Number.isNaN(m.nextOdo) ? Math.round(m.nextOdo) : '';
+    return [
+      m.date || '',
+      m.type || '',
+      odometer,
+      cost,
+      m.notes || '',
+      m.nextDate || '',
+      nextOdo,
+      maintenanceInfoText(m)
+    ];
+  });
+  return { headers, rows };
 }
 
 async function exportCSV() {
@@ -1634,50 +1848,53 @@ async function exportCSV() {
     alert('エクスポートする記録がありません。');
     return;
   }
-  const headers = ['開始日','開始時刻','終了日','終了時刻','開始オドメーター','最終オドメーター','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント'];
-  const rows = logs.map((log) => {
-    let eventsStr = '';
-    if (log.events && log.events.length) {
-      eventsStr = log.events
-        .map((ev) => {
-          let s = `${ev.startTime}`;
-          if (ev.endTime) s += `～${ev.endTime}`;
-          s += ` ${ev.type}`;
-          const location = normalizeAddress(ev.location || '');
-          if (location) s += `(${location})`;
-          if (ev.type === '給油') {
-            const amount = ev.fuelAmount !== '' ? `${ev.fuelAmount}L` : '';
-            const price = ev.fuelPrice !== '' ? `${ev.fuelPrice}円/L` : '';
-            const details = [amount, price].filter(Boolean).join(', ');
-            if (details) s += `:${details}`;
-          }
-          return s;
-        })
-        .join('; ');
-    }
-    const startAddress = normalizeAddress(log.start || '');
-    const endAddress = normalizeAddress(log.end || '');
-    return [
-      csvEscape(log.startDate),
-      csvEscape(log.startTime),
-      csvEscape(log.endDate),
-      csvEscape(log.endTime),
-      csvEscape(log.startOdo || ''),
-      csvEscape(log.finalOdo || ''),
-      csvEscape(log.purpose),
-      csvEscape(startAddress),
-      csvEscape(endAddress),
-      csvEscape(log.distance),
-      csvEscape(log.cost),
-      csvEscape(log.notes || ''),
-      csvEscape(eventsStr)
-    ].join(',');
-  });
-  const csvContent = [headers.join(','), ...rows].join('\r\n');
+  const { headers, rows } = buildLogExportMatrix();
+  const format = promptExportFormat('runlog_export_format', '走行記録の出力形式を選択してください。');
+  if (!format) return;
+  const csvContent = buildCsvContent(headers, rows);
+  const tableContent = buildTableContent(headers, rows);
   const year = determineLogExportYear();
-  const fileName = `runlog-${year}.csv`;
-  const handleKey = `runlog_csv_${year}`;
-  await saveCsvFile(handleKey, fileName, csvContent);
+  const baseName = `runlog-${year}`;
+  const results = [];
+  if (format === EXPORT_FORMATS.CSV || format === EXPORT_FORMATS.BOTH) {
+    const outcome = await saveTextFile(
+      `runlog_csv_${year}`,
+      `${baseName}.csv`,
+      csvContent,
+      {
+        description: 'CSVファイル',
+        mimeType: 'text/csv',
+        extensions: ['.csv'],
+        successMessage: null,
+        fallbackMessage: null,
+        cancelMessage: null,
+        errorMessage: null,
+        errorLogLabel: 'Failed to save CSV',
+        downloadMimeType: 'text/csv;charset=utf-8;'
+      }
+    );
+    results.push({ label: 'CSV', outcome });
+  }
+  if (format === EXPORT_FORMATS.TABLE || format === EXPORT_FORMATS.BOTH) {
+    const outcome = await saveTextFile(
+      `runlog_table_${year}`,
+      `${baseName}-table.txt`,
+      tableContent,
+      {
+        description: '罫線付きテキスト',
+        mimeType: 'text/plain',
+        extensions: ['.txt'],
+        successMessage: null,
+        fallbackMessage: null,
+        cancelMessage: null,
+        errorMessage: null,
+        errorLogLabel: 'Failed to save table text',
+        downloadMimeType: 'text/plain;charset=utf-8;'
+      }
+    );
+    results.push({ label: '罫線付きテキスト', outcome });
+  }
+  summarizeExportResults(results, '走行記録');
 }
 
 // メンテナンス
@@ -1876,22 +2093,53 @@ async function exportMaintenanceCSV() {
     alert('エクスポートするメンテナンス記録がありません。');
     return;
   }
-  const headers = ['日付','内容','オドメーター','費用(円)','メモ','次回目安日','次回目安走行距離(km)','次回サマリー'];
-  const rows = maintenance.map((m) => [
-    csvEscape(m.date),
-    csvEscape(m.type),
-    csvEscape(m.odometer),
-    csvEscape(m.cost),
-    csvEscape(m.notes || ''),
-    csvEscape(m.nextDate || ''),
-    csvEscape(typeof m.nextOdo === 'number' && !Number.isNaN(m.nextOdo) ? Math.round(m.nextOdo) : ''),
-    csvEscape(maintenanceInfoText(m))
-  ].join(','));
-  const csvContent = [headers.join(','), ...rows].join('\r\n');
+  const { headers, rows } = buildMaintenanceExportMatrix();
+  const format = promptExportFormat('maintenance_export_format', 'メンテナンス記録の出力形式を選択してください。');
+  if (!format) return;
+  const csvContent = buildCsvContent(headers, rows);
+  const tableContent = buildTableContent(headers, rows);
   const year = determineMaintenanceExportYear();
-  const fileName = `maintenance-${year}.csv`;
-  const handleKey = `maintenance_csv_${year}`;
-  await saveCsvFile(handleKey, fileName, csvContent);
+  const baseName = `maintenance-${year}`;
+  const results = [];
+  if (format === EXPORT_FORMATS.CSV || format === EXPORT_FORMATS.BOTH) {
+    const outcome = await saveTextFile(
+      `maintenance_csv_${year}`,
+      `${baseName}.csv`,
+      csvContent,
+      {
+        description: 'CSVファイル',
+        mimeType: 'text/csv',
+        extensions: ['.csv'],
+        successMessage: null,
+        fallbackMessage: null,
+        cancelMessage: null,
+        errorMessage: null,
+        errorLogLabel: 'Failed to save maintenance CSV',
+        downloadMimeType: 'text/csv;charset=utf-8;'
+      }
+    );
+    results.push({ label: 'CSV', outcome });
+  }
+  if (format === EXPORT_FORMATS.TABLE || format === EXPORT_FORMATS.BOTH) {
+    const outcome = await saveTextFile(
+      `maintenance_table_${year}`,
+      `${baseName}-table.txt`,
+      tableContent,
+      {
+        description: '罫線付きテキスト',
+        mimeType: 'text/plain',
+        extensions: ['.txt'],
+        successMessage: null,
+        fallbackMessage: null,
+        cancelMessage: null,
+        errorMessage: null,
+        errorLogLabel: 'Failed to save maintenance table',
+        downloadMimeType: 'text/plain;charset=utf-8;'
+      }
+    );
+    results.push({ label: '罫線付きテキスト', outcome });
+  }
+  summarizeExportResults(results, 'メンテナンス記録');
 }
 
 // Service Worker 登録
