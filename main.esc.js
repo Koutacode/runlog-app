@@ -51,6 +51,7 @@ let currentTripStartAddress = '';
 let currentTripStartLat = null;
 let currentTripStartLon = null;
 let currentTripStartOdo = '';
+let tripDayIntervalId = null;
 
 const DRIVING_EVENT_TYPE = '走行中';
 
@@ -119,7 +120,6 @@ function stopDrivingSegment(timestamp = Date.now()) {
 
 function updateCurrentStatusDisplay() {
   const indicator = document.getElementById('statusIndicator');
-  if (!indicator) return;
   let label = '停止中';
   let statusClass = 'status-inactive';
   if (currentTripStartTime) {
@@ -135,9 +135,76 @@ function updateCurrentStatusDisplay() {
       statusClass = 'status-driving';
     }
   }
-  indicator.textContent = label;
-  indicator.classList.remove('status-inactive', 'status-driving', 'status-task');
-  indicator.classList.add(statusClass);
+  if (indicator) {
+    indicator.textContent = label;
+    indicator.classList.remove('status-inactive', 'status-driving', 'status-task');
+    indicator.classList.add(statusClass);
+  }
+  updateTripDayDisplay();
+}
+
+function calculateTripDayNumber(startDate, referenceDate = new Date()) {
+  if (!(startDate instanceof Date)) return null;
+  const startTime = startDate.getTime();
+  if (Number.isNaN(startTime)) return null;
+  const reference = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  if (!(reference instanceof Date) || Number.isNaN(reference.getTime())) return null;
+  const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const referenceDay = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+  const diffDays = Math.floor((referenceDay - startDay) / DAY_MS);
+  if (Number.isNaN(diffDays)) return null;
+  return diffDays >= 0 ? diffDays + 1 : 1;
+}
+
+function updateTripDayDisplay() {
+  const element = document.getElementById('tripDayCounter');
+  if (!element) return;
+  if (!currentTripStartTime) {
+    element.innerHTML = '';
+    element.classList.add('hidden');
+    element.removeAttribute('aria-label');
+    return;
+  }
+  const dayNumber = calculateTripDayNumber(currentTripStartTime);
+  if (!dayNumber) {
+    element.innerHTML = '';
+    element.classList.add('hidden');
+    element.removeAttribute('aria-label');
+    return;
+  }
+  const mainLabel = `運行${dayNumber}日目`;
+  const startDateLabel = dateToLocalDateString(currentTripStartTime);
+  const subLabel = startDateLabel ? `開始: ${startDateLabel}` : '';
+  const subHtml = subLabel ? `<span class="trip-day__sub">${subLabel}</span>` : '';
+  element.innerHTML = `<span class="trip-day__main">${mainLabel}</span>${subHtml}`;
+  element.classList.remove('hidden');
+  if (subLabel) {
+    element.setAttribute('aria-label', `${mainLabel}（${subLabel}）`);
+  } else {
+    element.setAttribute('aria-label', mainLabel);
+  }
+}
+
+function startTripDayTicker() {
+  if (!currentTripStartTime) {
+    stopTripDayTicker();
+    return;
+  }
+  if (tripDayIntervalId !== null) {
+    clearInterval(tripDayIntervalId);
+  }
+  updateTripDayDisplay();
+  tripDayIntervalId = window.setInterval(() => {
+    updateTripDayDisplay();
+  }, 60000);
+}
+
+function stopTripDayTicker() {
+  if (tripDayIntervalId !== null) {
+    clearInterval(tripDayIntervalId);
+    tripDayIntervalId = null;
+  }
+  updateTripDayDisplay();
 }
 
 const geoOptions = { enableHighAccuracy: false, maximumAge: 600000, timeout: 5000 };
@@ -499,6 +566,7 @@ function toggleTrip() {
     currentTripStartAddress = '';
     currentTripStartOdo = '';
     currentTripEvents = [];
+    startTripDayTicker();
     updateCurrentStatusDisplay();
     const startOdoStr = prompt('開始オドメーター（任意）:');
     currentTripStartOdo = startOdoStr ? startOdoStr.trim() : '';
@@ -605,6 +673,7 @@ function toggleTrip() {
       currentTripStartOdo = '';
       currentTripStartLat = null;
       currentTripStartLon = null;
+      stopTripDayTicker();
       updateCurrentStatusDisplay();
       clearCurrentTripState();
       const label = document.getElementById('toggleLabel');
@@ -2319,6 +2388,11 @@ window.addEventListener('load', () => {
   applyDeviceClass();
   updateTripButtonUI();
   restoreEventButtonStates();
+  if (currentTripStartTime) {
+    startTripDayTicker();
+  } else {
+    updateTripDayDisplay();
+  }
   showList();
   registerServiceWorker();
   setupInstallButton();

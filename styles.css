@@ -71,6 +71,33 @@ nav .status-indicator {
   box-sizing: border-box;
 }
 
+nav .trip-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: 0.6rem 1.2rem;
+  font-weight: 600;
+  border-radius: 4px;
+  background: #fff;
+  color: #0f3d75;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  min-width: 8.5rem;
+  box-sizing: border-box;
+}
+
+.trip-day__main {
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
+.trip-day__sub {
+  font-size: 0.75rem;
+  color: #475569;
+  letter-spacing: 0.03em;
+}
+
 .status-indicator.status-inactive {
   background: #f1f5f9;
   color: #475569;
