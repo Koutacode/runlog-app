@@ -11,12 +11,14 @@ const FLAGS = {
 };
 
 const PENDING_GEOCODE_STORAGE_KEY = 'runlog_pendingGeocodes';
+const GOOGLE_MAPS_API_KEY_STORAGE_KEY = 'runlog_googleMapsApiKey';
 
 // 走行ログ
 let logs = [];
 // メンテナンス記録
 let maintenance = [];
 let pendingGeocodeQueue = [];
+let cachedGoogleMapsApiKey = null;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const maintenanceGuidelines = {
   'オイル交換': {
@@ -148,7 +150,26 @@ function buildPlaceLink(lat, lon, zoom = 16) {
   if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
   const latStr = lat.toFixed(6);
   const lonStr = lon.toFixed(6);
-  return `https://www.openstreetmap.org/?mlat=${encodeURIComponent(latStr)}&mlon=${encodeURIComponent(lonStr)}#map=${zoom}/${encodeURIComponent(latStr)}/${encodeURIComponent(lonStr)}`;
+  const rawZoom = Number(zoom);
+  const zoomValue = Number.isFinite(rawZoom)
+    ? Math.min(Math.max(Math.round(rawZoom), 3), 21)
+    : 16;
+  const coords = `${latStr},${lonStr}`;
+  let query = '';
+  if (typeof URLSearchParams === 'function') {
+    const params = new URLSearchParams({
+      api: '1',
+      map_action: 'map',
+      center: coords,
+      zoom: String(zoomValue),
+      basemap: 'roadmap'
+    });
+    query = params.toString();
+  } else {
+    const encodedCoords = encodeURIComponent(coords);
+    query = `api=1&map_action=map&center=${encodedCoords}&zoom=${encodeURIComponent(String(zoomValue))}&basemap=roadmap`;
+  }
+  return `https://www.google.com/maps/@?${query}`;
 }
 
 function renderLocationLink(lat, lon, options = {}) {
@@ -688,14 +709,128 @@ function requestAccuratePosition() {
   });
 }
 
+function readGoogleMapsApiKeyFromStorage() {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    const stored = localStorage.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY);
+    return typeof stored === 'string' ? stored.trim() : '';
+  } catch (err) {
+    console.warn('Failed to read Google Maps API key from storage', err);
+    return '';
+  }
+}
+
+function writeGoogleMapsApiKeyToStorage(value) {
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    if (value) {
+      localStorage.setItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY, value);
+    } else {
+      localStorage.removeItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY);
+    }
+    return true;
+  } catch (err) {
+    console.warn('Failed to store Google Maps API key', err);
+    return false;
+  }
+}
+
+function setCachedGoogleMapsApiKey(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  cachedGoogleMapsApiKey = normalized;
+  if (typeof window !== 'undefined') {
+    window.RUNLOG_GOOGLE_MAPS_API_KEY = normalized;
+  }
+  return normalized;
+}
+
+function getGoogleMapsApiKey() {
+  if (cachedGoogleMapsApiKey !== null) {
+    return cachedGoogleMapsApiKey;
+  }
+  let resolved = '';
+  if (typeof window !== 'undefined' && typeof window.RUNLOG_GOOGLE_MAPS_API_KEY === 'string') {
+    const candidate = window.RUNLOG_GOOGLE_MAPS_API_KEY.trim();
+    if (candidate) resolved = candidate;
+  }
+  if (!resolved && typeof document !== 'undefined') {
+    const meta = document.querySelector('meta[name="google-maps-api-key"]');
+    if (meta && typeof meta.content === 'string') {
+      const candidate = meta.content.trim();
+      if (candidate) resolved = candidate;
+    }
+  }
+  if (!resolved) {
+    resolved = readGoogleMapsApiKeyFromStorage();
+  }
+  return setCachedGoogleMapsApiKey(resolved);
+}
+
+function updateGoogleMapsApiKey(value) {
+  const normalized = setCachedGoogleMapsApiKey(value);
+  const success = writeGoogleMapsApiKeyToStorage(normalized);
+  return { value: normalized, persisted: success };
+}
+
+function configureMapSettings() {
+  const current = readGoogleMapsApiKeyFromStorage();
+  const message = current
+    ? 'Google MapsのAPIキーを更新してください（空欄で削除）:'
+    : 'Google MapsのAPIキーを入力してください（空欄で未設定）:';
+  const input = prompt(message, current);
+  if (input === null) return;
+  const { value, persisted } = updateGoogleMapsApiKey(input);
+  if (value) {
+    if (!persisted) {
+      alert('APIキーを保存できませんでした。ブラウザの設定を確認してください。');
+    } else {
+      alert('APIキーを保存しました。Googleマップのデータで住所を取得します。');
+    }
+  } else if (!persisted) {
+    alert('APIキーの削除を保存できませんでした。ブラウザの設定を確認してください。');
+  } else {
+    alert('APIキーを削除しました。住所の自動取得は無効になります。');
+  }
+}
+
 function fetchReverseGeocodedAddress(lat, lon) {
   if (typeof lat !== 'number' || Number.isNaN(lat) || typeof lon !== 'number' || Number.isNaN(lon)) {
     return Promise.resolve('');
   }
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ja&lat=${lat}&lon=${lon}`;
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) {
+    console.warn('Google Maps API key is not configured. Reverse geocoding will be skipped.');
+    return Promise.resolve('');
+  }
+  const rawParams = { latlng: `${lat},${lon}`, key: apiKey, language: 'ja' };
+  let query = '';
+  if (typeof URLSearchParams === 'function') {
+    const params = new URLSearchParams(rawParams);
+    query = params.toString();
+  } else {
+    const encoded = Object.entries(rawParams)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+    query = encoded;
+  }
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?${query}`;
   return fetch(url)
-    .then((response) => response.json())
-    .then((data) => (data && data.display_name) || '')
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.json();
+    })
+    .then((data) => {
+      if (!data || typeof data !== 'object') return '';
+      if (data.status !== 'OK' || !Array.isArray(data.results)) {
+        console.warn('Google Maps reverse geocoding did not return results', data.status, data.error_message);
+        return '';
+      }
+      const first = data.results[0];
+      if (!first || typeof first !== 'object') return '';
+      return first.formatted_address || '';
+    })
     .catch((error) => {
       console.warn('Reverse geocoding failed', error);
       return '';
@@ -719,6 +854,9 @@ function getAccurateLocation() {
       }
       if (navigator && typeof navigator.onLine === 'boolean' && !navigator.onLine) {
         return { address: '', lat, lon, needsReverseGeocode: true };
+      }
+      if (!getGoogleMapsApiKey()) {
+        return { address: '', lat, lon, needsReverseGeocode: false };
       }
       return fetchReverseGeocodedAddress(lat, lon)
         .then((address) => {
@@ -2900,6 +3038,7 @@ function applyJapaneseLabels() {
   setText('btnDaily', '日報');
   setText('btnExport', 'CSV出力');
   setText('btnMaintenance', '整備記録');
+  setText('btnMapSettings', '地図設定');
   setText('btnLoad', '積み込み');
   setText('btnUnload', '荷下ろし');
   setText('btnBoard', '乗船');
