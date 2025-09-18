@@ -7,6 +7,7 @@ const FLAGS = {
   ADV_FILTER: true,
   MAINT_REMIND: true,
   EXPENSE: true,
+  TRUCK_NAV: true,
 };
 
 const PENDING_GEOCODE_STORAGE_KEY = 'runlog_pendingGeocodes';
@@ -546,6 +547,29 @@ function renderLocationLink(lat, lon, options = {}) {
   const titleText = customTitle || `${lat.toFixed(5)}, ${lon.toFixed(5)} を地図で表示`;
   const safeTitle = escapeHtml(titleText);
   return `<a class="inline-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
+}
+
+function buildTruckNavigationLink(lat, lon, options = {}) {
+  if (!FLAGS.TRUCK_NAV) return '';
+  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
+  const latStr = lat.toFixed(6);
+  const lonStr = lon.toFixed(6);
+  const rawZoom = Number(options.zoom);
+  const safeZoom = Number.isFinite(rawZoom) ? Math.min(Math.max(Math.round(rawZoom), 4), 18) : 14;
+  const mapParam = `${latStr},${lonStr},${safeZoom},normal`;
+  return `https://wego.here.com/directions/truck/mylocation/${latStr},${lonStr}?map=${encodeURIComponent(mapParam)}`;
+}
+
+function renderTruckNavigationLink(lat, lon, options = {}) {
+  if (!FLAGS.TRUCK_NAV) return '';
+  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
+  const { label = 'トラック対応ナビ', title: customTitle = '', zoom } = options;
+  const url = buildTruckNavigationLink(lat, lon, { zoom });
+  if (!url) return '';
+  const safeLabel = escapeHtml(label);
+  const titleText = customTitle || `${lat.toFixed(5)}, ${lon.toFixed(5)} へ大型トラック対応ルートでナビ`;
+  const safeTitle = escapeHtml(titleText);
+  return `<a class="inline-link truck-nav-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
 }
 
 function generateGeocodeId() {
@@ -1378,7 +1402,11 @@ function formatLocation(address, lat, lon, options = {}) {
     maxLength = 32,
     showMapLink = true,
     linkLabel = '地図を見る',
-    showPendingLabel = true
+    showPendingLabel = true,
+    showTruckNavLink = true,
+    truckNavLabel = 'トラック対応ナビ',
+    truckNavTitle = '',
+    truckNavZoom = 14
   } = options;
   const segments = [];
   const normalized = normalizeAddress(address || '');
@@ -1392,6 +1420,14 @@ function formatLocation(address, lat, lon, options = {}) {
   if (showMapLink) {
     const link = renderLocationLink(lat, lon, { label: linkLabel });
     if (link) segments.push(link);
+  }
+  if (showTruckNavLink) {
+    const navLink = renderTruckNavigationLink(lat, lon, {
+      label: truckNavLabel,
+      title: truckNavTitle,
+      zoom: truckNavZoom
+    });
+    if (navLink) segments.push(navLink);
   }
   if (pending && showPendingLabel) {
     segments.push('<span class="location-status">住所取得中…</span>');
