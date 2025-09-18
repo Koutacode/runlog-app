@@ -2997,6 +2997,30 @@ function setupInstallButton() {
   });
 }
 
+function setupMapSettingsButton() {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('btnMapSettings');
+  if (!btn || btn.dataset.mapSettingsBound === 'true') return;
+  btn.addEventListener('click', (event) => {
+    if (event && typeof event.preventDefault === 'function') {
+      event.preventDefault();
+    }
+    configureMapSettings();
+  });
+  btn.dataset.mapSettingsBound = 'true';
+}
+
+function ensureMapSettingsButtonBinding() {
+  if (typeof document === 'undefined') return;
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      setupMapSettingsButton();
+    }, { once: true });
+  } else {
+    setupMapSettingsButton();
+  }
+}
+
 window.addEventListener('appinstalled', () => {
   const btn = document.getElementById('btnInstall');
   if (btn) {
@@ -3023,7 +3047,10 @@ window.addEventListener('load', () => {
   showList();
   registerServiceWorker();
   setupInstallButton();
+  setupMapSettingsButton();
 });
+
+ensureMapSettingsButtonBinding();
 
 // 画面の固定ラベル（ナビ等）を日本語に
 function applyJapaneseLabels() {
