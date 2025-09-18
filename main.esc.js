@@ -19,6 +19,7 @@ let logs = [];
 let maintenance = [];
 let pendingGeocodeQueue = [];
 let cachedGoogleMapsApiKey = null;
+let truckNavHandlerBound = false;
 const maintenanceGuidelines = {
   'オイル交換': {
     months: 12,
@@ -687,37 +688,203 @@ function renderLocationLink(lat, lon, options = {}) {
   return `<a class="inline-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
 }
 
-function buildTruckNavigationLink(lat, lon, options = {}) {
-  if (!FLAGS.TRUCK_NAV) return '';
-  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
+function normalizeTruckNavigationParams(lat, lon, options = {}) {
+  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return null;
   const latStr = lat.toFixed(6);
   const lonStr = lon.toFixed(6);
   const rawZoom = Number(options.zoom);
   const safeZoom = Number.isFinite(rawZoom) ? Math.min(Math.max(Math.round(rawZoom), 3), 20) : 15;
-  const llValue = `${latStr},${lonStr}`;
+  const rawName = typeof options.name === 'string' ? options.name : '';
+  const sanitizedName = rawName.replace(/\s+/g, ' ').trim();
+  const goalName = sanitizedName ? sanitizedName.slice(0, 80) : '';
+  return {
+    latStr,
+    lonStr,
+    llValue: `${latStr},${lonStr}`,
+    safeZoom,
+    goalName
+  };
+}
+
+function buildTruckNavigationLink(lat, lon, options = {}) {
+  if (!FLAGS.TRUCK_NAV) return '';
+  const params = normalizeTruckNavigationParams(lat, lon, options);
+  if (!params) return '';
+  const { llValue, safeZoom, goalName } = params;
   if (typeof URLSearchParams === 'function') {
-    const params = new URLSearchParams({
+    const query = new URLSearchParams({
       ll: llValue,
       z: String(safeZoom),
-      route: 'truck'
+      route: 'truck',
+      goal: llValue
     });
-    return `https://www.navitime.co.jp/maps?${params.toString()}`;
+    if (goalName) {
+      query.set('goal_name', goalName);
+    }
+    return `https://www.navitime.co.jp/maps?${query.toString()}`;
   }
-  const encodedCoords = encodeURIComponent(llValue);
-  const encodedZoom = encodeURIComponent(String(safeZoom));
-  return `https://www.navitime.co.jp/maps?ll=${encodedCoords}&z=${encodedZoom}&route=truck`;
+  const base = [
+    `ll=${encodeURIComponent(llValue)}`,
+    `z=${encodeURIComponent(String(safeZoom))}`,
+    'route=truck',
+    `goal=${encodeURIComponent(llValue)}`
+  ];
+  if (goalName) {
+    base.push(`goal_name=${encodeURIComponent(goalName)}`);
+  }
+  return `https://www.navitime.co.jp/maps?${base.join('&')}`;
+}
+
+function buildTruckNavigationAppUrls(lat, lon, options = {}) {
+  if (!FLAGS.TRUCK_NAV) return null;
+  const params = normalizeTruckNavigationParams(lat, lon, options);
+  if (!params) return null;
+  const { llValue, latStr, lonStr, safeZoom, goalName } = params;
+  const fallbackUrl = buildTruckNavigationLink(lat, lon, options);
+  if (!fallbackUrl) return null;
+  let query = '';
+  if (typeof URLSearchParams === 'function') {
+    const search = new URLSearchParams({
+      ll: llValue,
+      goal: llValue,
+      lat: latStr,
+      lon: lonStr,
+      z: String(safeZoom)
+    });
+    if (goalName) {
+      search.set('goal_name', goalName);
+    }
+    query = search.toString();
+  } else {
+    const components = [
+      `ll=${encodeURIComponent(llValue)}`,
+      `goal=${encodeURIComponent(llValue)}`,
+      `lat=${encodeURIComponent(latStr)}`,
+      `lon=${encodeURIComponent(lonStr)}`,
+      `z=${encodeURIComponent(String(safeZoom))}`
+    ];
+    if (goalName) {
+      components.push(`goal_name=${encodeURIComponent(goalName)}`);
+    }
+    query = components.join('&');
+  }
+  const iosUrl = `navitimetruck://route?${query}`;
+  const androidUrl = `intent://route?${query}#Intent;scheme=navitimetruck;package=com.navitime.local.navitimetruck;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
+  return { iosUrl, androidUrl, fallbackUrl };
 }
 
 function renderTruckNavigationLink(lat, lon, options = {}) {
   if (!FLAGS.TRUCK_NAV) return '';
-  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
-  const { label = 'NAVITIMEトラックナビ', title: customTitle = '', zoom } = options;
-  const url = buildTruckNavigationLink(lat, lon, { zoom });
-  if (!url) return '';
+  const { label = 'NAVITIMEトラックナビ', title: customTitle = '' } = options;
+  const appLinks = buildTruckNavigationAppUrls(lat, lon, options);
+  if (!appLinks) return '';
+  const { iosUrl, androidUrl, fallbackUrl } = appLinks;
   const safeLabel = escapeHtml(label);
   const titleText = customTitle || `NAVITIMEトラックナビで ${lat.toFixed(5)}, ${lon.toFixed(5)} 付近を表示`;
   const safeTitle = escapeHtml(titleText);
-  return `<a class="inline-link truck-nav-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
+  const attributes = [
+    `href="${escapeHtml(fallbackUrl)}"`,
+    'target="_blank"',
+    'rel="noopener noreferrer"',
+    `title="${safeTitle}"`
+  ];
+  if (iosUrl) {
+    attributes.push(`data-ios-url="${escapeHtml(iosUrl)}"`);
+  }
+  if (androidUrl) {
+    attributes.push(`data-android-intent="${escapeHtml(androidUrl)}"`);
+  }
+  return `<a class="inline-link truck-nav-link" ${attributes.join(' ')}>${safeLabel}</a>`;
+}
+
+function findTruckNavigationAnchor(element) {
+  if (!element) return null;
+  if (typeof element.closest === 'function') {
+    return element.closest('.truck-nav-link');
+  }
+  let current = element;
+  while (current) {
+    if (current.classList && current.classList.contains('truck-nav-link')) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function ensureTruckNavLinkBinding() {
+  if (!FLAGS.TRUCK_NAV) return;
+  if (truckNavHandlerBound) return;
+  if (typeof document === 'undefined') return;
+  truckNavHandlerBound = true;
+  document.addEventListener('click', (event) => {
+    const anchor = findTruckNavigationAnchor(event.target);
+    if (!anchor) return;
+    const iosUrl = anchor.getAttribute('data-ios-url') || '';
+    const androidUrl = anchor.getAttribute('data-android-intent') || '';
+    const fallbackUrl = anchor.getAttribute('href') || '';
+    if (!iosUrl && !androidUrl) return;
+    const nav = typeof navigator !== 'undefined' && navigator ? navigator : null;
+    const ua = nav && typeof nav.userAgent === 'string' ? nav.userAgent : '';
+    const maxTouchPoints = nav && typeof nav.maxTouchPoints === 'number' ? nav.maxTouchPoints : 0;
+    const isAndroid = /Android/i.test(ua);
+    const isAppleLike = /(iPhone|iPad|iPod)/i.test(ua) || (/\bMacintosh\b/i.test(ua) && maxTouchPoints > 1);
+    let deepLink = '';
+    if (isAndroid && androidUrl) {
+      deepLink = androidUrl;
+    } else if (isAppleLike && iosUrl) {
+      deepLink = iosUrl;
+    } else if (isAppleLike && androidUrl) {
+      deepLink = androidUrl;
+    } else if (!isAndroid && !isAppleLike) {
+      return;
+    } else {
+      deepLink = iosUrl || androidUrl;
+    }
+    if (!deepLink) return;
+    if (event && typeof event.preventDefault === 'function') {
+      event.preventDefault();
+    }
+    let timer = null;
+    const clearTimer = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const fallback = () => {
+      clearTimer();
+      if (fallbackUrl) {
+        window.location.href = fallbackUrl;
+      }
+    };
+    try {
+      timer = setTimeout(() => {
+        fallback();
+      }, 1200);
+      window.location.href = deepLink;
+    } catch (err) {
+      console.warn('Failed to open NAVITIME Truck Navi deep link', err);
+      fallback();
+      return;
+    }
+    window.addEventListener('blur', clearTimer, { once: true });
+    window.addEventListener('pagehide', clearTimer, { once: true });
+    if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+      const visibilityHandler = () => {
+        const state = typeof document.visibilityState === 'string'
+          ? document.visibilityState
+          : (document.hidden ? 'hidden' : 'visible');
+        if (state === 'hidden') {
+          clearTimer();
+        }
+        if (typeof document.removeEventListener === 'function') {
+          document.removeEventListener('visibilitychange', visibilityHandler);
+        }
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
+    }
+  });
 }
 
 function generateGeocodeId() {
@@ -1570,10 +1737,13 @@ function formatLocation(address, lat, lon, options = {}) {
     if (link) segments.push(link);
   }
   if (showTruckNavLink) {
+    const fallbackName = typeof fallback === 'string' ? fallback.trim() : '';
+    const truckNavName = normalized || (fallbackName && fallbackName !== '未入力' ? fallbackName : '');
     const navLink = renderTruckNavigationLink(lat, lon, {
       label: truckNavLabel,
       title: truckNavTitle,
-      zoom: truckNavZoom
+      zoom: truckNavZoom,
+      name: truckNavName
     });
     if (navLink) segments.push(navLink);
   }
@@ -3023,6 +3193,7 @@ window.addEventListener('load', () => {
 });
 
 ensureMapSettingsButtonBinding();
+ensureTruckNavLinkBinding();
 
 // 画面の固定ラベル（ナビ等）を日本語に
 function applyJapaneseLabels() {
