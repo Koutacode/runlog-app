@@ -654,26 +654,21 @@ function buildPlaceLink(lat, lon, zoom = 16) {
   if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
   const latStr = lat.toFixed(6);
   const lonStr = lon.toFixed(6);
-  const rawZoom = Number(zoom);
-  const zoomValue = Number.isFinite(rawZoom)
-    ? Math.min(Math.max(Math.round(rawZoom), 3), 21)
-    : 16;
   const coords = `${latStr},${lonStr}`;
   let query = '';
   if (typeof URLSearchParams === 'function') {
     const params = new URLSearchParams({
       api: '1',
-      map_action: 'map',
-      center: coords,
-      zoom: String(zoomValue),
-      basemap: 'roadmap'
+      destination: coords,
+      travelmode: 'driving',
+      dir_action: 'navigate'
     });
     query = params.toString();
   } else {
     const encodedCoords = encodeURIComponent(coords);
-    query = `api=1&map_action=map&center=${encodedCoords}&zoom=${encodeURIComponent(String(zoomValue))}&basemap=roadmap`;
+    query = `api=1&destination=${encodedCoords}&travelmode=driving&dir_action=navigate`;
   }
-  return `https://www.google.com/maps/@?${query}`;
+  return `https://www.google.com/maps/dir/?${query}`;
 }
 
 function renderLocationLink(lat, lon, options = {}) {
@@ -706,32 +701,35 @@ function normalizeTruckNavigationParams(lat, lon, options = {}) {
   };
 }
 
+function buildTruckNavigationQuery(params, extra = {}) {
+  if (!params) return null;
+  const { llValue, latStr, lonStr, safeZoom, goalName } = params;
+  const base = {
+    ll: llValue,
+    z: String(safeZoom),
+    route: 'truck',
+    goal: llValue,
+    goal_lat: latStr,
+    goal_lon: lonStr,
+    goal_set: '1'
+  };
+  if (goalName) {
+    base.goal_name = goalName;
+  }
+  return { ...base, ...extra };
+}
+
 function buildTruckNavigationLink(lat, lon, options = {}) {
   if (!FLAGS.TRUCK_NAV) return '';
   const params = normalizeTruckNavigationParams(lat, lon, options);
   if (!params) return '';
-  const { llValue, safeZoom, goalName } = params;
+  const queryParams = buildTruckNavigationQuery(params);
+  if (!queryParams) return '';
   if (typeof URLSearchParams === 'function') {
-    const query = new URLSearchParams({
-      ll: llValue,
-      z: String(safeZoom),
-      route: 'truck',
-      goal: llValue
-    });
-    if (goalName) {
-      query.set('goal_name', goalName);
-    }
+    const query = new URLSearchParams(queryParams);
     return `https://www.navitime.co.jp/maps?${query.toString()}`;
   }
-  const base = [
-    `ll=${encodeURIComponent(llValue)}`,
-    `z=${encodeURIComponent(String(safeZoom))}`,
-    'route=truck',
-    `goal=${encodeURIComponent(llValue)}`
-  ];
-  if (goalName) {
-    base.push(`goal_name=${encodeURIComponent(goalName)}`);
-  }
+  const base = Object.keys(queryParams).map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(queryParams[key])}`);
   return `https://www.navitime.co.jp/maps?${base.join('&')}`;
 }
 
@@ -739,33 +737,18 @@ function buildTruckNavigationAppUrls(lat, lon, options = {}) {
   if (!FLAGS.TRUCK_NAV) return null;
   const params = normalizeTruckNavigationParams(lat, lon, options);
   if (!params) return null;
-  const { llValue, latStr, lonStr, safeZoom, goalName } = params;
+  const { latStr, lonStr } = params;
   const fallbackUrl = buildTruckNavigationLink(lat, lon, options);
   if (!fallbackUrl) return null;
+  const deepLinkParams = buildTruckNavigationQuery(params, { lat: latStr, lon: lonStr });
+  if (!deepLinkParams) return null;
   let query = '';
   if (typeof URLSearchParams === 'function') {
-    const search = new URLSearchParams({
-      ll: llValue,
-      goal: llValue,
-      lat: latStr,
-      lon: lonStr,
-      z: String(safeZoom)
-    });
-    if (goalName) {
-      search.set('goal_name', goalName);
-    }
+    const search = new URLSearchParams(deepLinkParams);
     query = search.toString();
   } else {
-    const components = [
-      `ll=${encodeURIComponent(llValue)}`,
-      `goal=${encodeURIComponent(llValue)}`,
-      `lat=${encodeURIComponent(latStr)}`,
-      `lon=${encodeURIComponent(lonStr)}`,
-      `z=${encodeURIComponent(String(safeZoom))}`
-    ];
-    if (goalName) {
-      components.push(`goal_name=${encodeURIComponent(goalName)}`);
-    }
+    const components = Object.keys(deepLinkParams)
+      .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(deepLinkParams[key])}`);
     query = components.join('&');
   }
   const iosUrl = `navitimetruck://route?${query}`;
