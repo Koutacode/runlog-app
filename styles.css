@@ -313,28 +313,40 @@ h2 {
   color: #5f6f8d;
 }
 
-.inline-button {
+.location-text {
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid #cdd7ee;
-  background: #ffffff;
-  color: #1d3c6a;
+  gap: 0.3rem;
+  color: #1f365c;
+  font-size: 0.95rem;
+}
+
+.inline-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   font-size: 0.85rem;
-  cursor: pointer;
-  line-height: 1;
-  box-shadow: none;
+  color: #1d4ed8;
+  text-decoration: none;
 }
 
-.inline-button:hover {
-  background: #e9f0ff;
+.inline-link:hover,
+.inline-link:focus {
+  text-decoration: underline;
 }
 
-.inline-button:focus {
-  outline: 2px solid #5b82d7;
-  outline-offset: 1px;
+.location-status {
+  font-size: 0.8rem;
+  color: #b45309;
+}
+
+.event-location {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: #1f365c;
 }
 
 .table-action {
