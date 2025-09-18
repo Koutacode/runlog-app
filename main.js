@@ -190,19 +190,29 @@ function buildTruckNavigationLink(lat, lon, options = {}) {
   const latStr = lat.toFixed(6);
   const lonStr = lon.toFixed(6);
   const rawZoom = Number(options.zoom);
-  const safeZoom = Number.isFinite(rawZoom) ? Math.min(Math.max(Math.round(rawZoom), 4), 18) : 14;
-  const mapParam = `${latStr},${lonStr},${safeZoom},normal`;
-  return `https://wego.here.com/directions/truck/mylocation/${latStr},${lonStr}?map=${encodeURIComponent(mapParam)}`;
+  const safeZoom = Number.isFinite(rawZoom) ? Math.min(Math.max(Math.round(rawZoom), 3), 20) : 15;
+  const llValue = `${latStr},${lonStr}`;
+  if (typeof URLSearchParams === 'function') {
+    const params = new URLSearchParams({
+      ll: llValue,
+      z: String(safeZoom),
+      route: 'truck'
+    });
+    return `https://www.navitime.co.jp/maps?${params.toString()}`;
+  }
+  const encodedCoords = encodeURIComponent(llValue);
+  const encodedZoom = encodeURIComponent(String(safeZoom));
+  return `https://www.navitime.co.jp/maps?ll=${encodedCoords}&z=${encodedZoom}&route=truck`;
 }
 
 function renderTruckNavigationLink(lat, lon, options = {}) {
   if (!FLAGS.TRUCK_NAV) return '';
   if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
-  const { label = 'トラック対応ナビ', title: customTitle = '', zoom } = options;
+  const { label = 'NAVITIMEトラックナビ', title: customTitle = '', zoom } = options;
   const url = buildTruckNavigationLink(lat, lon, { zoom });
   if (!url) return '';
   const safeLabel = escapeHtml(label);
-  const titleText = customTitle || `${lat.toFixed(5)}, ${lon.toFixed(5)} へ大型トラック対応ルートでナビ`;
+  const titleText = customTitle || `NAVITIMEトラックナビで ${lat.toFixed(5)}, ${lon.toFixed(5)} 付近を表示`;
   const safeTitle = escapeHtml(titleText);
   return `<a class="inline-link truck-nav-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
 }
