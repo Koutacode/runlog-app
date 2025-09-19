@@ -1852,7 +1852,7 @@ function formatLocation(address, lat, lon, options = {}) {
     const link = renderLocationLink(lat, lon, { label: linkLabel });
     if (link) segments.push(link);
   }
-  if (pending && showPendingLabel) {
+  if (pending && showPendingLabel && !displayValue) {
     segments.push('<span class="location-status">住所取得中…</span>');
   }
   if (segments.length === 0) {
