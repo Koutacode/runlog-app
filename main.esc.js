@@ -634,6 +634,15 @@ function normalizeDisplayAddress(address) {
   return raw;
 }
 
+function pickNormalizedAddress(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const normalized = normalizeAddress(value);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -696,18 +705,41 @@ function normalizeTruckNavigationParams(lat, lon, options = {}) {
   const rawName = typeof options.name === 'string' ? options.name : '';
   const sanitizedName = rawName.replace(/\s+/g, ' ').trim();
   const goalName = sanitizedName ? sanitizedName.slice(0, 80) : '';
+  const startLatNum = Number(options.startLat);
+  const startLonNum = Number(options.startLon);
+  const hasStartCoords = Number.isFinite(startLatNum) && Number.isFinite(startLonNum);
+  const startLatStr = hasStartCoords ? startLatNum.toFixed(6) : null;
+  const startLonStr = hasStartCoords ? startLonNum.toFixed(6) : null;
+  const rawStartName = typeof options.startName === 'string' ? options.startName : '';
+  const sanitizedStartName = rawStartName.replace(/\s+/g, ' ').trim();
+  const startName = sanitizedStartName ? sanitizedStartName.slice(0, 80) : '';
+  const preferCurrentLocation = options.useCurrentLocation !== false;
   return {
     latStr,
     lonStr,
     llValue: `${latStr},${lonStr}`,
     safeZoom,
-    goalName
+    goalName,
+    startLatStr,
+    startLonStr,
+    startName,
+    preferCurrentLocation
   };
 }
 
 function buildTruckNavigationQuery(params, extra = {}) {
   if (!params) return null;
-  const { llValue, latStr, lonStr, safeZoom, goalName } = params;
+  const {
+    llValue,
+    latStr,
+    lonStr,
+    safeZoom,
+    goalName,
+    startLatStr,
+    startLonStr,
+    startName,
+    preferCurrentLocation
+  } = params;
   const base = {
     ll: llValue,
     z: String(safeZoom),
@@ -717,8 +749,21 @@ function buildTruckNavigationQuery(params, extra = {}) {
     goal_lon: lonStr,
     goal_set: '1'
   };
+  if (startLatStr && startLonStr) {
+    base.start = `${startLatStr},${startLonStr}`;
+    base.start_lat = startLatStr;
+    base.start_lon = startLonStr;
+    base.start_set = '1';
+  } else if (preferCurrentLocation) {
+    base.start = 'here';
+    base.start_set = '1';
+  }
   if (goalName) {
     base.goal_name = goalName;
+  }
+  const effectiveStartName = startName || (base.start === 'here' ? '現在地' : '');
+  if (effectiveStartName) {
+    base.start_name = effectiveStartName;
   }
   return { ...base, ...extra };
 }
@@ -762,8 +807,14 @@ function buildTruckNavigationAppUrls(lat, lon, options = {}) {
 
 function renderTruckNavigationLink(lat, lon, options = {}) {
   if (!FLAGS.TRUCK_NAV) return '';
-  const { label = 'NAVITIMEトラックナビ', title: customTitle = '' } = options;
-  const appLinks = buildTruckNavigationAppUrls(lat, lon, options);
+  const {
+    label = 'NAVITIMEトラックナビ',
+    title: customTitle = '',
+    startName = '現在地',
+    useCurrentLocation = true
+  } = options;
+  const linkOptions = { ...options, startName, useCurrentLocation };
+  const appLinks = buildTruckNavigationAppUrls(lat, lon, linkOptions);
   if (!appLinks) return '';
   const { iosUrl, androidUrl, fallbackUrl } = appLinks;
   const safeLabel = escapeHtml(label);
@@ -1647,7 +1698,13 @@ function loadLogs() {
           type: e.type || '',
           startTime: e.startTime || e.time || '',
           endTime: e.endTime || '',
-          location: normalizeAddress(e.location || ''),
+          location: pickNormalizedAddress(
+            e.location,
+            e.address,
+            e.place,
+            e.locationAddress,
+            e.locationName
+          ),
           lat: e.lat !== undefined ? e.lat : null,
           lon: e.lon !== undefined ? e.lon : null,
           fuelAmount: e.fuelAmount || '',
@@ -1665,16 +1722,32 @@ function loadLogs() {
       const endTimestamp = typeof l.endTimestamp === 'number' && !Number.isNaN(l.endTimestamp)
         ? l.endTimestamp
         : parseDateTimeToTimestamp(l.endDate || l.date || '', l.endTime || '');
+      const startAddress = pickNormalizedAddress(
+        l.start,
+        l.startAddress,
+        l.departure,
+        l.departureAddress,
+        l.startLocation,
+        l.origin
+      );
+      const endAddress = pickNormalizedAddress(
+        l.end,
+        l.endAddress,
+        l.arrival,
+        l.arrivalAddress,
+        l.endLocation,
+        l.destination
+      );
       return {
         startDate: l.startDate || l.date || '',
         startTime: l.startTime || '',
         endDate: l.endDate || l.date || '',
         endTime: l.endTime || '',
         purpose: l.purpose || '',
-        start: normalizeAddress(l.start || ''),
+        start: startAddress,
         startLat: l.startLat !== undefined ? l.startLat : null,
         startLon: l.startLon !== undefined ? l.startLon : null,
-        end: normalizeAddress(l.end || ''),
+        end: endAddress,
         endLat: l.endLat !== undefined ? l.endLat : null,
         endLon: l.endLon !== undefined ? l.endLon : null,
         distance: l.distance || '',
@@ -2005,6 +2078,16 @@ function formatLocation(address, lat, lon, options = {}) {
   return segments.join(' ');
 }
 
+function toDataAttributeName(key) {
+  if (!key && key !== 0) return '';
+  return String(key)
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[^a-zA-Z0-9-]/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
+
 function renderInlineTimeControl(value, options = {}) {
   const {
     editable = false,
@@ -2027,7 +2110,9 @@ function renderInlineTimeControl(value, options = {}) {
   const attributes = ['type="button"'];
   Object.entries(dataset).forEach(([key, rawVal]) => {
     if (rawVal === undefined || rawVal === null) return;
-    attributes.push(`data-${key}="${escapeHtml(String(rawVal))}"`);
+    const attrName = toDataAttributeName(key);
+    if (!attrName) return;
+    attributes.push(`data-${attrName}="${escapeHtml(String(rawVal))}"`);
   });
   if (label) {
     const safeLabel = escapeHtml(label);
