@@ -20,6 +20,10 @@ let maintenance = [];
 let pendingGeocodeQueue = [];
 let cachedGoogleMapsApiKey = null;
 let truckNavHandlerBound = false;
+let inlineTimeEditHandlerBound = false;
+let geocodeProcessing = false;
+let geocodeProcessingScheduled = false;
+let activeView = 'list';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const maintenanceGuidelines = {
   'オイル交換': {
@@ -98,33 +102,32 @@ function normalizeAddress(address) {
     .replace(/[，、]/g, ',')
     .replace(/[。]/g, '')
     .replace(/[()]/g, '');
-  const parts = sanitized.split(',').map((part) => part.trim()).filter(Boolean);
+  const parts = sanitized
+    .split(',')
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
   if (parts.length === 0) {
-    return sanitized.replace(/\s+/g, '');
+    return sanitized.replace(/\s+/g, ' ').trim();
   }
   const seen = new Set();
   const unique = [];
   parts.forEach((part) => {
-    const trimmed = part.replace(/\s+/g, ' ').trim();
-    const key = trimmed.replace(/\s+/g, '');
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    unique.push(trimmed);
+    const canonical = part.replace(/\s+/g, '');
+    if (!canonical || seen.has(canonical)) return;
+    seen.add(canonical);
+    unique.push(part);
   });
   if (unique.length === 0) {
-    return sanitized.replace(/\s+/g, '');
+    return sanitized.replace(/\s+/g, ' ').trim();
   }
-  const normalized = unique.map((part) => part.replace(/\s+/g, ''));
-  const postal = [];
-  const others = [];
-  normalized.forEach((part) => {
-    if (/^〒?\d/.test(part)) {
-      postal.push(part.startsWith('〒') ? part : `〒${part}`);
-    } else {
-      others.push(part);
-    }
-  });
-  return [...postal, ...others].join('');
+  const joined = unique.join(' ').replace(/\s+/g, ' ').trim();
+  return joined;
+}
+
+function normalizeDisplayAddress(address) {
+  if (address === null || address === undefined) return '';
+  const raw = String(address).replace(/[\u3000\s]+/g, ' ').trim();
+  return raw;
 }
 
 function escapeHtml(value) {
@@ -376,6 +379,8 @@ function generateGeocodeId() {
   return `geo_${timePart}_${randomPart}`;
 }
 
+const MAX_PENDING_GEOCODE_ATTEMPTS = 5;
+
 function sanitizeGeocodePayload(value) {
   if (!value || typeof value !== 'object') return {};
   try {
@@ -436,6 +441,7 @@ function enqueuePendingGeocode(entry) {
   if (!sanitized) return null;
   pendingGeocodeQueue.push(sanitized);
   persistPendingGeocodeQueue();
+  schedulePendingGeocodeProcessing(250);
   return sanitized;
 }
 
@@ -462,6 +468,251 @@ function queueGeocodeTasks(lat, lon, tasks = []) {
 
 function getPendingGeocodeQueue() {
   return pendingGeocodeQueue.slice();
+}
+
+function schedulePendingGeocodeProcessing(delay = 0) {
+  if (!FLAGS.GEO_LINK) return;
+  if (geocodeProcessingScheduled) return;
+  geocodeProcessingScheduled = true;
+  const timeout = Math.max(0, Number(delay) || 0);
+  setTimeout(() => {
+    geocodeProcessingScheduled = false;
+    processPendingGeocodeQueue();
+  }, timeout);
+}
+
+function applyGeocodeResult(entry, normalizedAddress) {
+  if (!entry || !normalizedAddress) {
+    return { logsUpdated: false, currentTripUpdated: false };
+  }
+  const payload = entry.payload || {};
+  const tripStartedAt = typeof payload.tripStartedAt === 'number' && !Number.isNaN(payload.tripStartedAt)
+    ? payload.tripStartedAt
+    : null;
+  const eventTimestamp = typeof payload.eventTimestamp === 'number' && !Number.isNaN(payload.eventTimestamp)
+    ? payload.eventTimestamp
+    : null;
+  const latValue = isValidCoordinate(entry.lat) ? entry.lat : null;
+  const lonValue = isValidCoordinate(entry.lon) ? entry.lon : null;
+  let logsUpdated = false;
+  let currentTripUpdated = false;
+
+  function updateLogStart(log) {
+    if (!log) return;
+    if (log.start !== normalizedAddress) {
+      log.start = normalizedAddress;
+      logsUpdated = true;
+    }
+    if (latValue !== null) log.startLat = latValue;
+    if (lonValue !== null) log.startLon = lonValue;
+    if (log.pendingStartGeocode) {
+      log.pendingStartGeocode = false;
+      logsUpdated = true;
+    }
+    if (Array.isArray(log.events)) {
+      const startEvent = log.events.find((ev) => ev && ev.type === '運行開始' && ev.startTimestamp === tripStartedAt);
+      if (startEvent) {
+        if (startEvent.location !== normalizedAddress) {
+          startEvent.location = normalizedAddress;
+          logsUpdated = true;
+        }
+        if (latValue !== null) startEvent.lat = latValue;
+        if (lonValue !== null) startEvent.lon = lonValue;
+        if (startEvent.pendingGeocode) {
+          startEvent.pendingGeocode = false;
+          logsUpdated = true;
+        }
+      }
+    }
+  }
+
+  function updateLogEnd(log) {
+    if (!log) return;
+    if (log.end !== normalizedAddress) {
+      log.end = normalizedAddress;
+      logsUpdated = true;
+    }
+    if (latValue !== null) log.endLat = latValue;
+    if (lonValue !== null) log.endLon = lonValue;
+    if (log.pendingEndGeocode) {
+      log.pendingEndGeocode = false;
+      logsUpdated = true;
+    }
+    if (Array.isArray(log.events) && eventTimestamp !== null) {
+      const endEvent = log.events.find((ev) => ev && ev.type === '運行終了' && ev.startTimestamp === eventTimestamp);
+      if (endEvent) {
+        if (endEvent.location !== normalizedAddress) {
+          endEvent.location = normalizedAddress;
+          logsUpdated = true;
+        }
+        if (latValue !== null) endEvent.lat = latValue;
+        if (lonValue !== null) endEvent.lon = lonValue;
+        if (endEvent.pendingGeocode) {
+          endEvent.pendingGeocode = false;
+          logsUpdated = true;
+        }
+      }
+    }
+  }
+
+  function updateLogEvent(log) {
+    if (!log || !Array.isArray(log.events) || tripStartedAt === null || eventTimestamp === null) return;
+    const targetEvent = log.events.find((ev) => ev && ev.startTimestamp === eventTimestamp && (!payload.eventType || ev.type === payload.eventType));
+    if (!targetEvent) return;
+    if (targetEvent.location !== normalizedAddress) {
+      targetEvent.location = normalizedAddress;
+      logsUpdated = true;
+    }
+    if (latValue !== null) targetEvent.lat = latValue;
+    if (lonValue !== null) targetEvent.lon = lonValue;
+    if (targetEvent.pendingGeocode) {
+      targetEvent.pendingGeocode = false;
+      logsUpdated = true;
+    }
+  }
+
+  if (entry.kind === 'trip-start-log') {
+    if (tripStartedAt !== null) {
+      const log = logs.find((item) => item && item.startTimestamp === tripStartedAt);
+      updateLogStart(log);
+    }
+    if (currentTripStartTime && tripStartedAt === currentTripStartTime.getTime()) {
+      if (currentTripStartAddress !== normalizedAddress) {
+        currentTripStartAddress = normalizedAddress;
+        currentTripUpdated = true;
+      }
+      if (latValue !== null && currentTripStartLat !== latValue) {
+        currentTripStartLat = latValue;
+        currentTripUpdated = true;
+      }
+      if (lonValue !== null && currentTripStartLon !== lonValue) {
+        currentTripStartLon = lonValue;
+        currentTripUpdated = true;
+      }
+      if (currentTripStartNeedsGeocode) {
+        currentTripStartNeedsGeocode = false;
+        currentTripUpdated = true;
+      }
+      const startEvent = currentTripEvents.find((ev) => ev && ev.type === '運行開始' && ev.startTimestamp === tripStartedAt);
+      if (startEvent) {
+        if (startEvent.location !== normalizedAddress) {
+          startEvent.location = normalizedAddress;
+          currentTripUpdated = true;
+        }
+        if (latValue !== null && startEvent.lat !== latValue) {
+          startEvent.lat = latValue;
+          currentTripUpdated = true;
+        }
+        if (lonValue !== null && startEvent.lon !== lonValue) {
+          startEvent.lon = lonValue;
+          currentTripUpdated = true;
+        }
+        if (startEvent.pendingGeocode) {
+          startEvent.pendingGeocode = false;
+          currentTripUpdated = true;
+        }
+      }
+    }
+  } else if (entry.kind === 'trip-end-log') {
+    if (tripStartedAt !== null) {
+      const log = logs.find((item) => item && item.startTimestamp === tripStartedAt);
+      updateLogEnd(log);
+    }
+  } else if (entry.kind === 'event') {
+    if (tripStartedAt !== null) {
+      const log = logs.find((item) => item && item.startTimestamp === tripStartedAt);
+      updateLogEvent(log);
+    }
+    if (currentTripStartTime && tripStartedAt === currentTripStartTime.getTime()) {
+      const targetEvent = currentTripEvents.find((ev) => ev && ev.startTimestamp === eventTimestamp && (!payload.eventType || ev.type === payload.eventType));
+      if (targetEvent) {
+        if (targetEvent.location !== normalizedAddress) {
+          targetEvent.location = normalizedAddress;
+          currentTripUpdated = true;
+        }
+        if (latValue !== null && targetEvent.lat !== latValue) {
+          targetEvent.lat = latValue;
+          currentTripUpdated = true;
+        }
+        if (lonValue !== null && targetEvent.lon !== lonValue) {
+          targetEvent.lon = lonValue;
+          currentTripUpdated = true;
+        }
+        if (targetEvent.pendingGeocode) {
+          targetEvent.pendingGeocode = false;
+          currentTripUpdated = true;
+        }
+      }
+    }
+  }
+
+  return { logsUpdated, currentTripUpdated };
+}
+
+function processPendingGeocodeQueue() {
+  if (!FLAGS.GEO_LINK) return;
+  if (geocodeProcessing) return;
+  if (!Array.isArray(pendingGeocodeQueue) || pendingGeocodeQueue.length === 0) return;
+  if (!getGoogleMapsApiKey()) return;
+  if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) return;
+
+  geocodeProcessing = true;
+  let logsUpdated = false;
+  let currentTripUpdated = false;
+
+  const handleFailure = () => {
+    const entry = pendingGeocodeQueue.shift();
+    if (!entry) return;
+    const attempts = (typeof entry.attempts === 'number' && !Number.isNaN(entry.attempts)) ? entry.attempts + 1 : 1;
+    entry.attempts = attempts;
+    if (attempts < MAX_PENDING_GEOCODE_ATTEMPTS) {
+      pendingGeocodeQueue.push(entry);
+    }
+    persistPendingGeocodeQueue();
+  };
+
+  const finalize = () => {
+    geocodeProcessing = false;
+    if (logsUpdated) saveLogs();
+    if (currentTripUpdated) saveCurrentTripState();
+    if (logsUpdated || currentTripUpdated) {
+      refreshActiveView();
+    }
+  };
+
+  const step = () => {
+    if (pendingGeocodeQueue.length === 0) {
+      finalize();
+      return;
+    }
+    const entry = pendingGeocodeQueue[0];
+    fetchReverseGeocodedAddress(entry.lat, entry.lon)
+      .then((address) => {
+        const normalized = normalizeAddress(address || '');
+        if (normalized) {
+          const result = applyGeocodeResult(entry, normalized);
+          if (result.logsUpdated) logsUpdated = true;
+          if (result.currentTripUpdated) currentTripUpdated = true;
+          pendingGeocodeQueue.shift();
+          persistPendingGeocodeQueue();
+        } else {
+          handleFailure();
+        }
+      })
+      .catch(() => {
+        handleFailure();
+      })
+      .finally(() => {
+        if (!geocodeProcessing) return;
+        if (pendingGeocodeQueue.length === 0) {
+          finalize();
+        } else {
+          setTimeout(step, 400);
+        }
+      });
+  };
+
+  step();
 }
 
 function timestampToDateString(timestamp) {
@@ -929,6 +1180,7 @@ function getGoogleMapsApiKey() {
 function updateGoogleMapsApiKey(value) {
   const normalized = setCachedGoogleMapsApiKey(value);
   const success = writeGoogleMapsApiKeyToStorage(normalized);
+  if (normalized) schedulePendingGeocodeProcessing(200);
   return { value: normalized, persisted: success };
 }
 
@@ -1600,6 +1852,7 @@ function cancelLogForm(editIndex) {
 
 // 走行ログ フォーム
 function showForm(editIndex = -1) {
+  activeView = 'log-form';
   const init = {
     startDate: '',
     startTime: '',
@@ -1805,15 +2058,19 @@ function formatLocation(address, lat, lon, options = {}) {
     showTruckNavLink = true,
     truckNavLabel = 'トラック対応ナビ',
     truckNavTitle = '',
-    truckNavZoom = 14
+    truckNavZoom = 14,
+    displayAddress = ''
   } = options;
   const segments = [];
   const normalized = normalizeAddress(address || '');
-  if (normalized) {
-    const summary = summarizeAddress(normalized, maxLength);
+  const displayOverride = normalizeDisplayAddress(displayAddress);
+  const displayValue = displayOverride || normalized;
+  if (displayValue) {
+    const summary = summarizeAddress(displayValue, maxLength);
     const safeSummary = escapeHtml(summary);
-    const needsTitle = summary !== normalized;
-    const titleAttr = needsTitle ? ` title="${escapeHtml(normalized)}"` : '';
+    const titleSource = displayOverride || normalized;
+    const needsTitle = !!titleSource && summary !== titleSource;
+    const titleAttr = needsTitle ? ` title="${escapeHtml(titleSource)}"` : '';
     segments.push(`<span class="location-text"${titleAttr}>${safeSummary}</span>`);
   }
   if (showMapLink) {
@@ -1821,11 +2078,16 @@ function formatLocation(address, lat, lon, options = {}) {
     if (link) segments.push(link);
   }
   if (showTruckNavLink) {
-    const fallbackName = typeof fallback === 'string' ? fallback.trim() : '';
-    const truckNavName = normalized || (fallbackName && fallbackName !== '未入力' ? fallbackName : '');
+    const fallbackName = normalizeDisplayAddress(fallback);
+    let truckNavName = normalized || displayOverride || (fallbackName && fallbackName !== '未入力' ? fallbackName : '');
+    if (!truckNavName && displayValue) {
+      truckNavName = displayValue;
+    }
+    const derivedTitle = truckNavName ? `${truckNavName} をNAVITIMEトラックナビで開く` : '';
+    const navTitle = truckNavTitle || derivedTitle;
     const navLink = renderTruckNavigationLink(lat, lon, {
       label: truckNavLabel,
-      title: truckNavTitle,
+      title: navTitle,
       zoom: truckNavZoom,
       name: truckNavName
     });
@@ -1844,20 +2106,94 @@ function formatLocation(address, lat, lon, options = {}) {
   return segments.join(' ');
 }
 
-function renderEventList(events, emptyMessage) {
+function renderInlineTimeControl(value, options = {}) {
+  const {
+    editable = false,
+    dataset = {},
+    placeholder = '--:--',
+    label = '',
+    displayClass = ''
+  } = options;
+  const safePlaceholder = escapeHtml(placeholder);
+  if (!editable) {
+    const classes = ['time-value'];
+    if (displayClass) classes.push(displayClass);
+    if (!value) classes.push('muted');
+    const text = value ? escapeHtml(value) : safePlaceholder;
+    return `<span class="${classes.join(' ')}">${text}</span>`;
+  }
+  const classes = ['time-editable'];
+  if (displayClass) classes.push(displayClass);
+  if (!value) classes.push('time-editable--empty');
+  const attributes = ['type="button"'];
+  Object.entries(dataset).forEach(([key, rawVal]) => {
+    if (rawVal === undefined || rawVal === null) return;
+    attributes.push(`data-${key}="${escapeHtml(String(rawVal))}"`);
+  });
+  if (label) {
+    const safeLabel = escapeHtml(label);
+    attributes.push(`data-label="${safeLabel}"`);
+    attributes.push(`aria-label="${safeLabel}"`);
+  }
+  const text = value ? escapeHtml(value) : safePlaceholder;
+  return `<button class="${classes.join(' ')}" ${attributes.join(' ')}>${text}</button>`;
+}
+
+function renderEventTimeRange(event, options = {}) {
+  const {
+    allowInlineTimeEdit = false,
+    logIndex = -1,
+    eventIndex = -1
+  } = options;
+  const editable = allowInlineTimeEdit && logIndex >= 0 && eventIndex >= 0;
+  const baseLabel = event.type || 'イベント';
+  const startControl = renderInlineTimeControl(event.startTime || '', {
+    editable,
+    dataset: {
+      context: 'event',
+      logIndex,
+      eventIndex,
+      field: 'startTime'
+    },
+    label: `${baseLabel}の開始時刻を編集`,
+    placeholder: '--:--',
+    displayClass: 'event-time-button'
+  });
+  const endControl = renderInlineTimeControl(event.endTime || '', {
+    editable,
+    dataset: {
+      context: 'event',
+      logIndex,
+      eventIndex,
+      field: 'endTime'
+    },
+    label: `${baseLabel}の終了時刻を編集`,
+    placeholder: '--:--',
+    displayClass: 'event-time-button'
+  });
+  if (editable || event.endTime) {
+    return `<span class="event-time">${startControl}<span class="time-separator">～</span>${endControl}</span>`;
+  }
+  return `<span class="event-time">${startControl}</span>`;
+}
+
+function renderEventList(events, emptyMessage, options = {}) {
+  const { logIndex = -1, allowInlineTimeEdit = false } = options;
   if (!Array.isArray(events) || events.length === 0) {
     return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
   }
   return `
     <ul class="event-list">
       ${events
-        .map((ev) => {
+        .map((ev, eventIndex) => {
           const parts = [];
           parts.push(`<span class="event-label">${ev.type || ''}</span>`);
-          const timeRange = ev.startTime
-            ? (ev.endTime ? `${ev.startTime}～${ev.endTime}` : ev.startTime)
-            : (ev.endTime || '');
-          if (timeRange) parts.push(`<span class="event-time">${timeRange}</span>`);
+          const timeHtml = renderEventTimeRange(ev, {
+            allowInlineTimeEdit,
+            logIndex,
+            eventIndex
+          });
+          if (timeHtml) parts.push(timeHtml);
           if (typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0) {
             const mins = Math.floor(ev.durationSec / 60);
             const secs = ev.durationSec % 60;
@@ -1901,7 +2237,8 @@ function renderLogReportCard(log, options = {}) {
     contextLabel = '',
     events: overrideEvents = null,
     eventEmptyMessage = null,
-    eventCountSuffix = ''
+    eventCountSuffix = '',
+    allowInlineTimeEdit = false
   } = options;
   const events = Array.isArray(overrideEvents) ? overrideEvents : (log.events || []);
   const startParts = [];
@@ -1921,9 +2258,35 @@ function renderLogReportCard(log, options = {}) {
   if (contextLabel) headerMetaItems.push(`<span class="report-context">${contextLabel}</span>`);
   const headerMeta = headerMetaItems.length ? `<div class="report-header-meta">${headerMetaItems.join(' ')}</div>` : '';
   const notesBlock = log.notes ? `<p class="report-note"><strong>メモ</strong>${log.notes}</p>` : '';
-  const eventsList = renderEventList(events, eventEmptyMessage || 'イベントは記録されていません。');
+  const eventsList = renderEventList(events, eventEmptyMessage || 'イベントは記録されていません。', {
+    logIndex: index,
+    allowInlineTimeEdit
+  });
   const countBase = events.length ? `${events.length}件` : '記録なし';
   const eventCountLabel = `${countBase}${eventCountSuffix}`;
+  const timeEditable = allowInlineTimeEdit && index >= 0;
+  const startTimeControl = renderInlineTimeControl(log.startTime || '', {
+    editable: timeEditable,
+    dataset: {
+      context: 'log',
+      logIndex: index,
+      field: 'startTime'
+    },
+    label: `${log.startDate ? `${log.startDate}の` : ''}開始時刻を編集`,
+    placeholder: '--:--',
+    displayClass: 'log-time-button'
+  });
+  const endTimeControl = renderInlineTimeControl(log.endTime || '', {
+    editable: timeEditable,
+    dataset: {
+      context: 'log',
+      logIndex: index,
+      field: 'endTime'
+    },
+    label: `${log.endDate ? `${log.endDate}の` : ''}終了時刻を編集`,
+    placeholder: '--:--',
+    displayClass: 'log-time-button'
+  });
   const actions = showActions && index >= 0
     ? `
       <div class="report-footer">
@@ -1944,6 +2307,14 @@ function renderLogReportCard(log, options = {}) {
         <div>
           <dt>目的</dt>
           <dd>${formatText(log.purpose)}</dd>
+        </div>
+        <div>
+          <dt>開始時刻</dt>
+          <dd>${startTimeControl}</dd>
+        </div>
+        <div>
+          <dt>終了時刻</dt>
+          <dd>${endTimeControl}</dd>
         </div>
         <div>
           <dt>出発地</dt>
@@ -1989,6 +2360,197 @@ function renderLogReportCard(log, options = {}) {
   `;
 }
 
+function normalizeTimeInput(value) {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return '';
+  const colonMatch = /^([0-9]{1,2}):([0-9]{1,2})$/.exec(trimmed);
+  let hours;
+  let minutes;
+  if (colonMatch) {
+    hours = Number(colonMatch[1]);
+    minutes = Number(colonMatch[2]);
+  } else if (/^[0-9]{3,4}$/.test(trimmed)) {
+    const padded = trimmed.padStart(4, '0');
+    const splitIndex = padded.length - 2;
+    hours = Number(padded.slice(0, splitIndex));
+    minutes = Number(padded.slice(splitIndex));
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function requestTimeInput(initialValue, label) {
+  let attempt = 0;
+  const initial = initialValue || '';
+  while (true) {
+    const messageLines = [];
+    if (label) {
+      messageLines.push(`${label}をHH:MM形式で入力してください。`);
+    } else {
+      messageLines.push('時間をHH:MM形式で入力してください。');
+    }
+    messageLines.push('空欄で未設定にできます。');
+    const input = prompt(messageLines.join('\n'), attempt === 0 ? initial : '');
+    if (input === null) return null;
+    const normalized = normalizeTimeInput(input);
+    if (normalized !== null) return normalized;
+    alert('時刻はHH:MM形式（例: 08:30）で入力してください。');
+    attempt += 1;
+  }
+}
+
+function mergeTimeIntoTimestamp(baseTimestamp, timeStr) {
+  if (typeof baseTimestamp !== 'number' || Number.isNaN(baseTimestamp)) return null;
+  if (!timeStr) return null;
+  const parts = timeStr.split(':');
+  if (parts.length !== 2) return null;
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  const date = new Date(baseTimestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(hours, minutes, 0, 0);
+  return date.getTime();
+}
+
+function resolveEventTimestampBase(log, event, timestampField) {
+  if (event && typeof event[timestampField] === 'number' && !Number.isNaN(event[timestampField])) {
+    return event[timestampField];
+  }
+  if (timestampField === 'startTimestamp') {
+    if (typeof log.startTimestamp === 'number' && !Number.isNaN(log.startTimestamp)) {
+      return log.startTimestamp;
+    }
+    return null;
+  }
+  if (typeof log.endTimestamp === 'number' && !Number.isNaN(log.endTimestamp)) {
+    return log.endTimestamp;
+  }
+  if (typeof log.startTimestamp === 'number' && !Number.isNaN(log.startTimestamp)) {
+    return log.startTimestamp;
+  }
+  return null;
+}
+
+function applyLogTimeUpdate(logIndex, field, newValue) {
+  const log = logs[logIndex];
+  if (!log) return false;
+  const key = field === 'endTime' ? 'endTime' : 'startTime';
+  if (log[key] === newValue) return false;
+  log[key] = newValue;
+  const timestampKey = key === 'endTime' ? 'endTimestamp' : 'startTimestamp';
+  if (!newValue) {
+    log[timestampKey] = null;
+    return true;
+  }
+  const dateKey = key === 'endTime' ? 'endDate' : 'startDate';
+  const fallbackDateKey = key === 'endTime' ? 'startDate' : 'endDate';
+  const dateStr = log[dateKey] || log[fallbackDateKey] || '';
+  if (!dateStr) {
+    log[timestampKey] = null;
+    return true;
+  }
+  const parsed = parseDateTimeToTimestamp(dateStr, newValue);
+  log[timestampKey] = parsed !== null ? parsed : null;
+  return true;
+}
+
+function applyEventTimeUpdate(logIndex, eventIndex, field, newValue) {
+  const log = logs[logIndex];
+  if (!log || !Array.isArray(log.events) || eventIndex < 0 || eventIndex >= log.events.length) return false;
+  const event = log.events[eventIndex];
+  if (!event) return false;
+  const key = field === 'endTime' ? 'endTime' : 'startTime';
+  if (event[key] === newValue) return false;
+  event[key] = newValue;
+  const timestampKey = key === 'endTime' ? 'endTimestamp' : 'startTimestamp';
+  if (!newValue) {
+    event[timestampKey] = null;
+  } else {
+    const base = resolveEventTimestampBase(log, event, timestampKey);
+    event[timestampKey] = base !== null ? mergeTimeIntoTimestamp(base, newValue) : null;
+  }
+  if (
+    typeof event.startTimestamp === 'number' && !Number.isNaN(event.startTimestamp) &&
+    typeof event.endTimestamp === 'number' && !Number.isNaN(event.endTimestamp)
+  ) {
+    const diffSec = Math.round((event.endTimestamp - event.startTimestamp) / 1000);
+    event.durationSec = Number.isNaN(diffSec) ? '' : diffSec;
+  } else {
+    event.durationSec = '';
+  }
+  return true;
+}
+
+function findTimeEditableElement(element) {
+  if (!element) return null;
+  if (typeof element.closest === 'function') {
+    return element.closest('.time-editable');
+  }
+  let current = element;
+  while (current) {
+    if (current.classList && current.classList.contains('time-editable')) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function handleInlineTimeEdit(element) {
+  const context = element.getAttribute('data-context') || '';
+  const field = element.getAttribute('data-field') || '';
+  const label = element.getAttribute('data-label') || '';
+  const logIndexAttr = element.getAttribute('data-log-index');
+  const logIndex = Number(logIndexAttr);
+  if (!Number.isFinite(logIndex) || logIndex < 0 || logIndex >= logs.length) return;
+  if (context === 'log') {
+    const log = logs[logIndex];
+    const currentValue = (log && log[field]) || '';
+    const promptLabel = label || (field === 'endTime' ? '終了時刻' : '開始時刻');
+    const newValue = requestTimeInput(currentValue, promptLabel);
+    if (newValue === null) return;
+    if (applyLogTimeUpdate(logIndex, field, newValue)) {
+      saveLogs();
+      refreshActiveView();
+    }
+    return;
+  }
+  if (context === 'event') {
+    const eventIndexAttr = element.getAttribute('data-event-index');
+    const eventIndex = Number(eventIndexAttr);
+    if (!Number.isFinite(eventIndex) || eventIndex < 0) return;
+    const log = logs[logIndex];
+    if (!log || !Array.isArray(log.events) || !log.events[eventIndex]) return;
+    const event = log.events[eventIndex];
+    const currentValue = event[field] || '';
+    const promptLabel = label || (field === 'endTime' ? '終了時刻' : '開始時刻');
+    const newValue = requestTimeInput(currentValue, promptLabel);
+    if (newValue === null) return;
+    if (applyEventTimeUpdate(logIndex, eventIndex, field, newValue)) {
+      saveLogs();
+      refreshActiveView();
+    }
+  }
+}
+
+function ensureInlineTimeEditBinding() {
+  if (inlineTimeEditHandlerBound) return;
+  if (typeof document === 'undefined') return;
+  inlineTimeEditHandlerBound = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!target) return;
+    const timeButton = findTimeEditableElement(target);
+    if (!timeButton) return;
+    handleInlineTimeEdit(timeButton);
+  });
+}
+
 function renderCurrentTripCard() {
   if (!currentTripStartTime) return '';
   const pseudoLog = {
@@ -2019,14 +2581,16 @@ function renderCurrentTripCard() {
 }
 
 function showList() {
+  activeView = 'list';
   const container = document.getElementById('content');
   if (!container) return;
+  ensureInlineTimeEditBinding();
   if (logs.length === 0 && !currentTripStartTime) {
     container.innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
     return;
   }
   const cardsHtml = logs
-    .map((log, index) => renderLogReportCard(log, { index, showActions: true }))
+    .map((log, index) => renderLogReportCard(log, { index, showActions: true, allowInlineTimeEdit: true }))
     .join('');
   const currentCard = currentTripStartTime ? renderCurrentTripCard() : '';
   container.innerHTML = `
@@ -2049,6 +2613,7 @@ function deleteLog(index) {
 }
 
 function showSummary() {
+  activeView = 'summary';
   if (logs.length === 0) {
     document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
     return;
@@ -2069,31 +2634,66 @@ function showSummary() {
 }
 
 function showDailyReport() {
+  activeView = 'daily';
+  const container = document.getElementById('content');
+  if (!container) return;
+  ensureInlineTimeEditBinding();
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
+    container.innerHTML = '<p>記録がありません。</p>';
     return;
   }
   const sections = logs
-    .map((log) => {
-      const events = (log.events || [])
-        .map((ev) => {
-          const locationHtml = formatLocation(ev.location, ev.lat, ev.lon, {
-            pending: !!ev.pendingGeocode,
-            fallback: '-',
-            maxLength: 28,
-            linkLabel: '地図を見る'
-          });
-          return `
+    .map((log, logIndex) => {
+      const eventRows = Array.isArray(log.events) ? log.events : [];
+      const events = eventRows.length
+        ? eventRows
+            .map((ev, eventIndex) => {
+              const baseLabel = ev.type || 'イベント';
+              const startControl = renderInlineTimeControl(ev.startTime || '', {
+                editable: true,
+                dataset: {
+                  context: 'event',
+                  logIndex,
+                  eventIndex,
+                  field: 'startTime'
+                },
+                label: `${baseLabel}の開始時刻を編集`,
+                placeholder: '--:--',
+                displayClass: 'event-time-button'
+              });
+              const endControl = renderInlineTimeControl(ev.endTime || '', {
+                editable: true,
+                dataset: {
+                  context: 'event',
+                  logIndex,
+                  eventIndex,
+                  field: 'endTime'
+                },
+                label: `${baseLabel}の終了時刻を編集`,
+                placeholder: '--:--',
+                displayClass: 'event-time-button'
+              });
+              const locationHtml = formatLocation(ev.location, ev.lat, ev.lon, {
+                pending: !!ev.pendingGeocode,
+                fallback: '-',
+                maxLength: 28,
+                linkLabel: '地図を見る'
+              });
+              const fuelCell = ev.type === '給油' && ev.fuelAmount !== ''
+                ? escapeHtml(String(ev.fuelAmount))
+                : '';
+              return `
           <tr>
-            <td>${ev.startTime || ''}</td>
-            <td>${ev.endTime || ''}</td>
-            <td>${ev.type}</td>
+            <td>${startControl}</td>
+            <td>${endControl}</td>
+            <td>${escapeHtml(ev.type || '')}</td>
             <td>${locationHtml || '<span class="muted">-</span>'}</td>
-            <td>${ev.type === '給油' && ev.fuelAmount !== '' ? ev.fuelAmount : ''}</td>
+            <td>${fuelCell}</td>
           </tr>
         `;
-        })
-        .join('');
+            })
+            .join('')
+        : '<tr><td colspan="5"><span class="muted">イベントは記録されていません。</span></td></tr>';
       const startLocation = formatLocation(log.start, log.startLat, log.startLon, {
         pending: !!log.pendingStartGeocode,
         maxLength: 40
@@ -2102,12 +2702,36 @@ function showDailyReport() {
         pending: !!log.pendingEndGeocode,
         maxLength: 40
       });
+      const startTimeControl = renderInlineTimeControl(log.startTime || '', {
+        editable: true,
+        dataset: {
+          context: 'log',
+          logIndex,
+          field: 'startTime'
+        },
+        label: `${log.startDate ? `${log.startDate}の` : ''}開始時刻を編集`,
+        placeholder: '--:--',
+        displayClass: 'log-time-button'
+      });
+      const endTimeControl = renderInlineTimeControl(log.endTime || '', {
+        editable: true,
+        dataset: {
+          context: 'log',
+          logIndex,
+          field: 'endTime'
+        },
+        label: `${log.endDate ? `${log.endDate}の` : ''}終了時刻を編集`,
+        placeholder: '--:--',
+        displayClass: 'log-time-button'
+      });
       return `
         <section class="report">
           <h3>${log.startDate} ${log.startTime} ～ ${log.endDate} ${log.endTime}</h3>
+          <p>開始時刻: ${startTimeControl}</p>
+          <p>終了時刻: ${endTimeControl}</p>
           <p>出発地: ${startLocation}</p>
           <p>到着地: ${endLocation}</p>
-          <p>目的: ${log.purpose || ''}</p>
+          <p>目的: ${formatText(log.purpose || '', '未入力')}</p>
           <table>
             <thead>
               <tr><th>開始</th><th>終了</th><th>内容</th><th>場所</th><th>給油量(L)</th></tr>
@@ -2118,12 +2742,16 @@ function showDailyReport() {
       `;
     })
     .join('');
-  document.getElementById('content').innerHTML = `<h2>日報</h2>${sections}`;
+  container.innerHTML = `<h2>日報</h2>${sections}`;
 }
 
 function showRecordsByDate() {
+  activeView = 'by-date';
+  const container = document.getElementById('content');
+  if (!container) return;
+  ensureInlineTimeEditBinding();
   if (logs.length === 0) {
-    document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
+    container.innerHTML = '<p>記録がありません。</p>';
     return;
   }
   const dateSet = new Set();
@@ -2146,7 +2774,7 @@ function showRecordsByDate() {
   });
   const dates = Array.from(dateSet).sort();
   if (dates.length === 0) {
-    document.getElementById('content').innerHTML = '<p>表示できる日付がありません。</p>';
+    container.innerHTML = '<p>表示できる日付がありません。</p>';
     return;
   }
   const options = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
@@ -2163,7 +2791,7 @@ function showRecordsByDate() {
     </section>
     <div id="recordsByDate"></div>
   `;
-  document.getElementById('content').innerHTML = html;
+  container.innerHTML = html;
   const selectEl = document.getElementById('recordDate');
   const listEl = document.getElementById('recordsByDate');
   if (!selectEl || !listEl) return;
@@ -2192,7 +2820,8 @@ function showRecordsByDate() {
         return renderLogReportCard(log, {
           events: eventsForDate,
           eventEmptyMessage: '該当するイベントはありません。',
-          eventCountSuffix: '（対象日）'
+          eventCountSuffix: '（対象日）',
+          allowInlineTimeEdit: true
         });
       })
       .join('');
@@ -2852,6 +3481,7 @@ async function exportCSV() {
 
 // メンテナンス
 function showMaintenanceList() {
+  activeView = 'maintenance';
   if (maintenance.length === 0) {
     document.getElementById('content').innerHTML = `
       <h2>メンテナンス</h2>
@@ -2944,6 +3574,7 @@ function cancelMaintenanceForm(editIndex) {
 }
 
 function showMaintenanceForm(editIndex = -1) {
+  activeView = 'maintenance-form';
   const init = { date: timestampToDateString(Date.now()), type: 'オイル交換', odometer: '', cost: '', notes: '' };
   const m = editIndex >= 0 ? { ...maintenance[editIndex] } : init;
   const html = `
@@ -3124,6 +3755,28 @@ async function exportMaintenanceCSV() {
   summarizeExportResults(results, 'メンテナンス記録');
 }
 
+function refreshActiveView() {
+  switch (activeView) {
+    case 'list':
+      showList();
+      break;
+    case 'summary':
+      showSummary();
+      break;
+    case 'daily':
+      showDailyReport();
+      break;
+    case 'by-date':
+      showRecordsByDate();
+      break;
+    case 'maintenance':
+      showMaintenanceList();
+      break;
+    default:
+      break;
+  }
+}
+
 // Service Worker 登録
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
@@ -3158,6 +3811,10 @@ function setupInstallButton() {
     btn.disabled = true;
     btn.classList.add('hidden');
   });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => schedulePendingGeocodeProcessing(500));
 }
 
 function setupMapSettingsButton() {
@@ -3211,6 +3868,7 @@ window.addEventListener('load', () => {
   registerServiceWorker();
   setupInstallButton();
   setupMapSettingsButton();
+  schedulePendingGeocodeProcessing(800);
 });
 
 ensureMapSettingsButtonBinding();
