@@ -7,7 +7,6 @@ const FLAGS = {
   ADV_FILTER: true,
   MAINT_REMIND: true,
   EXPENSE: true,
-  TRUCK_NAV: true,
 };
 
 const PENDING_GEOCODE_STORAGE_KEY = 'runlog_pendingGeocodes';
@@ -19,7 +18,6 @@ let logs = [];
 let maintenance = [];
 let pendingGeocodeQueue = [];
 let cachedGoogleMapsApiKey = null;
-let truckNavHandlerBound = false;
 let inlineTimeEditHandlerBound = false;
 let geocodeProcessing = false;
 let geocodeProcessingScheduled = false;
@@ -696,235 +694,6 @@ function renderLocationLink(lat, lon, options = {}) {
   return `<a class="inline-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
 }
 
-function normalizeTruckNavigationParams(lat, lon, options = {}) {
-  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return null;
-  const latStr = lat.toFixed(6);
-  const lonStr = lon.toFixed(6);
-  const rawZoom = Number(options.zoom);
-  const safeZoom = Number.isFinite(rawZoom) ? Math.min(Math.max(Math.round(rawZoom), 3), 20) : 15;
-  const rawName = typeof options.name === 'string' ? options.name : '';
-  const sanitizedName = rawName.replace(/\s+/g, ' ').trim();
-  const goalName = sanitizedName ? sanitizedName.slice(0, 80) : '';
-  const startLatNum = Number(options.startLat);
-  const startLonNum = Number(options.startLon);
-  const hasStartCoords = Number.isFinite(startLatNum) && Number.isFinite(startLonNum);
-  const startLatStr = hasStartCoords ? startLatNum.toFixed(6) : null;
-  const startLonStr = hasStartCoords ? startLonNum.toFixed(6) : null;
-  const rawStartName = typeof options.startName === 'string' ? options.startName : '';
-  const sanitizedStartName = rawStartName.replace(/\s+/g, ' ').trim();
-  const startName = sanitizedStartName ? sanitizedStartName.slice(0, 80) : '';
-  const preferCurrentLocation = options.useCurrentLocation !== false;
-  return {
-    latStr,
-    lonStr,
-    llValue: `${latStr},${lonStr}`,
-    safeZoom,
-    goalName,
-    startLatStr,
-    startLonStr,
-    startName,
-    preferCurrentLocation
-  };
-}
-
-function buildTruckNavigationQuery(params, extra = {}) {
-  if (!params) return null;
-  const {
-    llValue,
-    latStr,
-    lonStr,
-    safeZoom,
-    goalName,
-    startLatStr,
-    startLonStr,
-    startName,
-    preferCurrentLocation
-  } = params;
-  const base = {
-    ll: llValue,
-    z: String(safeZoom),
-    route: 'truck',
-    goal: llValue,
-    goal_lat: latStr,
-    goal_lon: lonStr,
-    goal_set: '1'
-  };
-  if (startLatStr && startLonStr) {
-    base.start = `${startLatStr},${startLonStr}`;
-    base.start_lat = startLatStr;
-    base.start_lon = startLonStr;
-    base.start_set = '1';
-  } else if (preferCurrentLocation) {
-    base.start = 'here';
-    base.start_set = '1';
-  }
-  if (goalName) {
-    base.goal_name = goalName;
-  }
-  const effectiveStartName = startName || (base.start === 'here' ? '現在地' : '');
-  if (effectiveStartName) {
-    base.start_name = effectiveStartName;
-  }
-  return { ...base, ...extra };
-}
-
-function buildTruckNavigationLink(lat, lon, options = {}) {
-  if (!FLAGS.TRUCK_NAV) return '';
-  const params = normalizeTruckNavigationParams(lat, lon, options);
-  if (!params) return '';
-  const queryParams = buildTruckNavigationQuery(params);
-  if (!queryParams) return '';
-  if (typeof URLSearchParams === 'function') {
-    const query = new URLSearchParams(queryParams);
-    return `https://www.navitime.co.jp/maps?${query.toString()}`;
-  }
-  const base = Object.keys(queryParams).map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(queryParams[key])}`);
-  return `https://www.navitime.co.jp/maps?${base.join('&')}`;
-}
-
-function buildTruckNavigationAppUrls(lat, lon, options = {}) {
-  if (!FLAGS.TRUCK_NAV) return null;
-  const params = normalizeTruckNavigationParams(lat, lon, options);
-  if (!params) return null;
-  const { latStr, lonStr } = params;
-  const fallbackUrl = buildTruckNavigationLink(lat, lon, options);
-  if (!fallbackUrl) return null;
-  const deepLinkParams = buildTruckNavigationQuery(params, { lat: latStr, lon: lonStr });
-  if (!deepLinkParams) return null;
-  let query = '';
-  if (typeof URLSearchParams === 'function') {
-    const search = new URLSearchParams(deepLinkParams);
-    query = search.toString();
-  } else {
-    const components = Object.keys(deepLinkParams)
-      .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(deepLinkParams[key])}`);
-    query = components.join('&');
-  }
-  const iosUrl = `navitimetruck://route?${query}`;
-  const androidUrl = `intent://route?${query}#Intent;scheme=navitimetruck;package=com.navitime.local.navitimetruck;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
-  return { iosUrl, androidUrl, fallbackUrl };
-}
-
-function renderTruckNavigationLink(lat, lon, options = {}) {
-  if (!FLAGS.TRUCK_NAV) return '';
-  const {
-    label = 'NAVITIMEトラックナビ',
-    title: customTitle = '',
-    startName = '現在地',
-    useCurrentLocation = true
-  } = options;
-  const linkOptions = { ...options, startName, useCurrentLocation };
-  const appLinks = buildTruckNavigationAppUrls(lat, lon, linkOptions);
-  if (!appLinks) return '';
-  const { iosUrl, androidUrl, fallbackUrl } = appLinks;
-  const safeLabel = escapeHtml(label);
-  const titleText = customTitle || `NAVITIMEトラックナビで ${lat.toFixed(5)}, ${lon.toFixed(5)} 付近を表示`;
-  const safeTitle = escapeHtml(titleText);
-  const attributes = [
-    `href="${escapeHtml(fallbackUrl)}"`,
-    'target="_blank"',
-    'rel="noopener noreferrer"',
-    `title="${safeTitle}"`
-  ];
-  if (iosUrl) {
-    attributes.push(`data-ios-url="${escapeHtml(iosUrl)}"`);
-  }
-  if (androidUrl) {
-    attributes.push(`data-android-intent="${escapeHtml(androidUrl)}"`);
-  }
-  return `<a class="inline-link truck-nav-link" ${attributes.join(' ')}>${safeLabel}</a>`;
-}
-
-function findTruckNavigationAnchor(element) {
-  if (!element) return null;
-  if (typeof element.closest === 'function') {
-    return element.closest('.truck-nav-link');
-  }
-  let current = element;
-  while (current) {
-    if (current.classList && current.classList.contains('truck-nav-link')) {
-      return current;
-    }
-    current = current.parentElement;
-  }
-  return null;
-}
-
-function ensureTruckNavLinkBinding() {
-  if (!FLAGS.TRUCK_NAV) return;
-  if (truckNavHandlerBound) return;
-  if (typeof document === 'undefined') return;
-  truckNavHandlerBound = true;
-  document.addEventListener('click', (event) => {
-    const anchor = findTruckNavigationAnchor(event.target);
-    if (!anchor) return;
-    const iosUrl = anchor.getAttribute('data-ios-url') || '';
-    const androidUrl = anchor.getAttribute('data-android-intent') || '';
-    const fallbackUrl = anchor.getAttribute('href') || '';
-    if (!iosUrl && !androidUrl) return;
-    const nav = typeof navigator !== 'undefined' && navigator ? navigator : null;
-    const ua = nav && typeof nav.userAgent === 'string' ? nav.userAgent : '';
-    const maxTouchPoints = nav && typeof nav.maxTouchPoints === 'number' ? nav.maxTouchPoints : 0;
-    const isAndroid = /Android/i.test(ua);
-    const isAppleLike = /(iPhone|iPad|iPod)/i.test(ua) || (/\bMacintosh\b/i.test(ua) && maxTouchPoints > 1);
-    let deepLink = '';
-    if (isAndroid && androidUrl) {
-      deepLink = androidUrl;
-    } else if (isAppleLike && iosUrl) {
-      deepLink = iosUrl;
-    } else if (isAppleLike && androidUrl) {
-      deepLink = androidUrl;
-    } else if (!isAndroid && !isAppleLike) {
-      return;
-    } else {
-      deepLink = iosUrl || androidUrl;
-    }
-    if (!deepLink) return;
-    if (event && typeof event.preventDefault === 'function') {
-      event.preventDefault();
-    }
-    let timer = null;
-    const clearTimer = () => {
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
-    const fallback = () => {
-      clearTimer();
-      if (fallbackUrl) {
-        window.location.href = fallbackUrl;
-      }
-    };
-    try {
-      timer = setTimeout(() => {
-        fallback();
-      }, 1200);
-      window.location.href = deepLink;
-    } catch (err) {
-      console.warn('Failed to open NAVITIME Truck Navi deep link', err);
-      fallback();
-      return;
-    }
-    window.addEventListener('blur', clearTimer, { once: true });
-    window.addEventListener('pagehide', clearTimer, { once: true });
-    if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
-      const visibilityHandler = () => {
-        const state = typeof document.visibilityState === 'string'
-          ? document.visibilityState
-          : (document.hidden ? 'hidden' : 'visible');
-        if (state === 'hidden') {
-          clearTimer();
-        }
-        if (typeof document.removeEventListener === 'function') {
-          document.removeEventListener('visibilitychange', visibilityHandler);
-        }
-      };
-      document.addEventListener('visibilitychange', visibilityHandler);
-    }
-  });
-}
-
 function generateGeocodeId() {
   if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {
     return `geo_${crypto.randomUUID()}`;
@@ -1058,6 +827,11 @@ function applyGeocodeResult(entry, normalizedAddress) {
       log.start = normalizedAddress;
       logsUpdated = true;
     }
+    const displayValue = normalizeDisplayAddress(normalizedAddress);
+    if (log.startDisplay !== displayValue) {
+      log.startDisplay = displayValue;
+      logsUpdated = true;
+    }
     if (latValue !== null) log.startLat = latValue;
     if (lonValue !== null) log.startLon = lonValue;
     if (log.pendingStartGeocode) {
@@ -1085,6 +859,11 @@ function applyGeocodeResult(entry, normalizedAddress) {
     if (!log) return;
     if (log.end !== normalizedAddress) {
       log.end = normalizedAddress;
+      logsUpdated = true;
+    }
+    const displayValue = normalizeDisplayAddress(normalizedAddress);
+    if (log.endDisplay !== displayValue) {
+      log.endDisplay = displayValue;
       logsUpdated = true;
     }
     if (latValue !== null) log.endLat = latValue;
@@ -1611,9 +1390,11 @@ function toggleTrip() {
         endTime: endTimeStr,
         purpose: '',
         start: currentTripStartAddress,
+        startDisplay: currentTripStartAddress,
         startLat: startLatValue,
         startLon: startLonValue,
         end: endAddr,
+        endDisplay: endAddr,
         endLat: latValue,
         endLon: lonValue,
         distance: '',
@@ -1730,6 +1511,16 @@ function loadLogs() {
         l.startLocation,
         l.origin
       );
+      const startDisplay = normalizeDisplayAddress(
+        l.startDisplay
+          ?? l.start
+          ?? l.startAddress
+          ?? l.departure
+          ?? l.departureAddress
+          ?? l.startLocation
+          ?? l.origin
+          ?? ''
+      );
       const endAddress = pickNormalizedAddress(
         l.end,
         l.endAddress,
@@ -1738,6 +1529,16 @@ function loadLogs() {
         l.endLocation,
         l.destination
       );
+      const endDisplay = normalizeDisplayAddress(
+        l.endDisplay
+          ?? l.end
+          ?? l.endAddress
+          ?? l.arrival
+          ?? l.arrivalAddress
+          ?? l.endLocation
+          ?? l.destination
+          ?? ''
+      );
       return {
         startDate: l.startDate || l.date || '',
         startTime: l.startTime || '',
@@ -1745,9 +1546,11 @@ function loadLogs() {
         endTime: l.endTime || '',
         purpose: l.purpose || '',
         start: startAddress,
+        startDisplay,
         startLat: l.startLat !== undefined ? l.startLat : null,
         startLon: l.startLon !== undefined ? l.startLon : null,
         end: endAddress,
+        endDisplay,
         endLat: l.endLat !== undefined ? l.endLat : null,
         endLon: l.endLon !== undefined ? l.endLon : null,
         distance: l.distance || '',
@@ -1875,11 +1678,11 @@ function showForm(editIndex = -1) {
       </div>
       <div>
         <label for="start">出発地:</label>
-        <input type="text" id="start" value="${log.start || ''}">
+        <input type="text" id="start" value="${log.startDisplay || log.start || ''}">
       </div>
       <div>
         <label for="end">到着地:</label>
-        <input type="text" id="end" value="${log.end || ''}">
+        <input type="text" id="end" value="${log.endDisplay || log.end || ''}">
       </div>
       <div>
         <label for="distance">距離 (km):</label>
@@ -1923,6 +1726,8 @@ function submitLog(editIndex) {
   const purpose = document.getElementById('purpose').value.trim();
   const startInput = document.getElementById('start').value.trim();
   const endInput = document.getElementById('end').value.trim();
+  const startDisplay = normalizeDisplayAddress(startInput);
+  const endDisplay = normalizeDisplayAddress(endInput);
   const start = normalizeAddress(startInput);
   const end = normalizeAddress(endInput);
   const distance = parseFloat(document.getElementById('distance').value);
@@ -1958,9 +1763,11 @@ function submitLog(editIndex) {
     endTime,
     purpose,
     start,
+    startDisplay,
     startLat: existing.startLat !== undefined ? existing.startLat : null,
     startLon: existing.startLon !== undefined ? existing.startLon : null,
     end,
+    endDisplay,
     endLat: existing.endLat !== undefined ? existing.endLat : null,
     endLon: existing.endLon !== undefined ? existing.endLon : null,
     distance: isNaN(distance) ? '' : distance,
@@ -2027,10 +1834,6 @@ function formatLocation(address, lat, lon, options = {}) {
     showMapLink = true,
     linkLabel = '地図を見る',
     showPendingLabel = true,
-    showTruckNavLink = true,
-    truckNavLabel = 'トラック対応ナビ',
-    truckNavTitle = '',
-    truckNavZoom = 14,
     displayAddress = ''
   } = options;
   const segments = [];
@@ -2048,22 +1851,6 @@ function formatLocation(address, lat, lon, options = {}) {
   if (showMapLink) {
     const link = renderLocationLink(lat, lon, { label: linkLabel });
     if (link) segments.push(link);
-  }
-  if (showTruckNavLink) {
-    const fallbackName = normalizeDisplayAddress(fallback);
-    let truckNavName = normalized || displayOverride || (fallbackName && fallbackName !== '未入力' ? fallbackName : '');
-    if (!truckNavName && displayValue) {
-      truckNavName = displayValue;
-    }
-    const derivedTitle = truckNavName ? `${truckNavName} をNAVITIMEトラックナビで開く` : '';
-    const navTitle = truckNavTitle || derivedTitle;
-    const navLink = renderTruckNavigationLink(lat, lon, {
-      label: truckNavLabel,
-      title: navTitle,
-      zoom: truckNavZoom,
-      name: truckNavName
-    });
-    if (navLink) segments.push(navLink);
   }
   if (pending && showPendingLabel) {
     segments.push('<span class="location-status">住所取得中…</span>');
@@ -2304,14 +2091,16 @@ function renderLogReportCard(log, options = {}) {
           <dt>出発地</dt>
           <dd>${formatLocation(log.start, log.startLat, log.startLon, {
             pending: !!log.pendingStartGeocode,
-            maxLength: 42
+            maxLength: 42,
+            displayAddress: log.startDisplay || ''
           })}</dd>
         </div>
         <div>
           <dt>到着地</dt>
           <dd>${formatLocation(log.end, log.endLat, log.endLon, {
             pending: !!log.pendingEndGeocode,
-            maxLength: 42
+            maxLength: 42,
+            displayAddress: log.endDisplay || ''
           })}</dd>
         </div>
         <div>
@@ -2543,9 +2332,11 @@ function renderCurrentTripCard() {
     endDate: '',
     endTime: '',
     start: currentTripStartAddress || '',
+    startDisplay: currentTripStartAddress || '',
     startLat: currentTripStartLat,
     startLon: currentTripStartLon,
     end: '',
+    endDisplay: '',
     endLat: null,
     endLon: null,
     distance: '',
@@ -2706,11 +2497,13 @@ function showDailyReport() {
         : '<tr><td colspan="5"><span class="muted">イベントは記録されていません。</span></td></tr>';
       const startDetail = formatLocation(log.start, log.startLat, log.startLon, {
         pending: !!log.pendingStartGeocode,
-        maxLength: 40
+        maxLength: 40,
+        displayAddress: log.startDisplay || ''
       });
       const endDetail = formatLocation(log.end, log.endLat, log.endLon, {
         pending: !!log.pendingEndGeocode,
-        maxLength: 40
+        maxLength: 40,
+        displayAddress: log.endDisplay || ''
       });
       const startTimeControl = renderInlineTimeControl(log.startTime || '', {
         editable: true,
@@ -3453,8 +3246,8 @@ function buildLogExportMatrix() {
         })
         .join('; ');
     }
-    const startAddress = normalizeAddress(log.start || '');
-    const endAddress = normalizeAddress(log.end || '');
+    const startAddress = normalizeDisplayAddress(log.startDisplay || log.start || '');
+    const endAddress = normalizeDisplayAddress(log.endDisplay || log.end || '');
     const distance = log.distance === undefined || log.distance === null ? '' : log.distance;
     const cost = log.cost === undefined || log.cost === null ? '' : log.cost;
     return [
@@ -3891,8 +3684,6 @@ window.addEventListener('load', () => {
 });
 
 ensureMapSettingsButtonBinding();
-ensureTruckNavLinkBinding();
-
 // 画面の固定ラベル（ナビ等）を日本語に
 function applyJapaneseLabels() {
   document.title = '運行管理(K)';
