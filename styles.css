@@ -370,11 +370,6 @@ h2 {
   text-decoration: none;
 }
 
-.inline-link.truck-nav-link {
-  color: #047857;
-  font-weight: 600;
-}
-
 .inline-link:hover,
 .inline-link:focus {
   text-decoration: underline;
