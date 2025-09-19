@@ -313,6 +313,46 @@ h2 {
   color: #5f6f8d;
 }
 
+.time-value {
+  font-size: 0.95rem;
+}
+
+.time-editable {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #1f365c;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.time-editable:hover {
+  color: #0f3d75;
+}
+
+.time-editable:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.time-editable--empty {
+  color: #6b7280;
+}
+
+.time-separator {
+  margin: 0 0.2rem;
+  color: #64748b;
+}
+
+.event-time-button {
+  font-size: 0.9rem;
+}
+
+.log-time-button {
+  font-size: 1rem;
+}
+
 .location-text {
   display: inline-flex;
   align-items: center;
