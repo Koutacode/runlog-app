@@ -301,7 +301,7 @@ function schedulePendingGeocodeProcessing(delay = 0) {
   }, timeout);
 }
 
-function applyGeocodeResult(entry, normalizedAddress) {
+function applyGeocodeResult(entry, normalizedAddress, displayAddress = '') {
   if (!entry || !normalizedAddress) {
     return { logsUpdated: false, currentTripUpdated: false };
   }
@@ -314,6 +314,7 @@ function applyGeocodeResult(entry, normalizedAddress) {
     : null;
   const latValue = isValidCoordinate(entry.lat) ? entry.lat : null;
   const lonValue = isValidCoordinate(entry.lon) ? entry.lon : null;
+  const normalizedDisplay = normalizeDisplayAddress(displayAddress || normalizedAddress);
   let logsUpdated = false;
   let currentTripUpdated = false;
 
@@ -323,9 +324,8 @@ function applyGeocodeResult(entry, normalizedAddress) {
       log.start = normalizedAddress;
       logsUpdated = true;
     }
-    const displayValue = normalizeDisplayAddress(normalizedAddress);
-    if (log.startDisplay !== displayValue) {
-      log.startDisplay = displayValue;
+    if (log.startDisplay !== normalizedDisplay) {
+      log.startDisplay = normalizedDisplay;
       logsUpdated = true;
     }
     if (latValue !== null) log.startLat = latValue;
@@ -339,6 +339,10 @@ function applyGeocodeResult(entry, normalizedAddress) {
       if (startEvent) {
         if (startEvent.location !== normalizedAddress) {
           startEvent.location = normalizedAddress;
+          logsUpdated = true;
+        }
+        if (startEvent.locationDisplay !== normalizedDisplay) {
+          startEvent.locationDisplay = normalizedDisplay;
           logsUpdated = true;
         }
         if (latValue !== null) startEvent.lat = latValue;
@@ -357,9 +361,8 @@ function applyGeocodeResult(entry, normalizedAddress) {
       log.end = normalizedAddress;
       logsUpdated = true;
     }
-    const displayValue = normalizeDisplayAddress(normalizedAddress);
-    if (log.endDisplay !== displayValue) {
-      log.endDisplay = displayValue;
+    if (log.endDisplay !== normalizedDisplay) {
+      log.endDisplay = normalizedDisplay;
       logsUpdated = true;
     }
     if (latValue !== null) log.endLat = latValue;
@@ -373,6 +376,10 @@ function applyGeocodeResult(entry, normalizedAddress) {
       if (endEvent) {
         if (endEvent.location !== normalizedAddress) {
           endEvent.location = normalizedAddress;
+          logsUpdated = true;
+        }
+        if (endEvent.locationDisplay !== normalizedDisplay) {
+          endEvent.locationDisplay = normalizedDisplay;
           logsUpdated = true;
         }
         if (latValue !== null) endEvent.lat = latValue;
@@ -393,6 +400,10 @@ function applyGeocodeResult(entry, normalizedAddress) {
       targetEvent.location = normalizedAddress;
       logsUpdated = true;
     }
+    if (targetEvent.locationDisplay !== normalizedDisplay) {
+      targetEvent.locationDisplay = normalizedDisplay;
+      logsUpdated = true;
+    }
     if (latValue !== null) targetEvent.lat = latValue;
     if (lonValue !== null) targetEvent.lon = lonValue;
     if (targetEvent.pendingGeocode) {
@@ -411,6 +422,10 @@ function applyGeocodeResult(entry, normalizedAddress) {
         currentTripStartAddress = normalizedAddress;
         currentTripUpdated = true;
       }
+      if (currentTripStartDisplay !== normalizedDisplay) {
+        currentTripStartDisplay = normalizedDisplay;
+        currentTripUpdated = true;
+      }
       if (latValue !== null && currentTripStartLat !== latValue) {
         currentTripStartLat = latValue;
         currentTripUpdated = true;
@@ -423,10 +438,14 @@ function applyGeocodeResult(entry, normalizedAddress) {
         currentTripStartNeedsGeocode = false;
         currentTripUpdated = true;
       }
-      const startEvent = currentTripEvents.find((ev) => ev && ev.type === '運行開始' && ev.startTimestamp === tripStartedAt);
+    const startEvent = currentTripEvents.find((ev) => ev && ev.type === '運行開始' && ev.startTimestamp === tripStartedAt);
       if (startEvent) {
         if (startEvent.location !== normalizedAddress) {
           startEvent.location = normalizedAddress;
+          currentTripUpdated = true;
+        }
+        if (startEvent.locationDisplay !== normalizedDisplay) {
+          startEvent.locationDisplay = normalizedDisplay;
           currentTripUpdated = true;
         }
         if (latValue !== null && startEvent.lat !== latValue) {
@@ -458,6 +477,10 @@ function applyGeocodeResult(entry, normalizedAddress) {
       if (targetEvent) {
         if (targetEvent.location !== normalizedAddress) {
           targetEvent.location = normalizedAddress;
+          currentTripUpdated = true;
+        }
+        if (targetEvent.locationDisplay !== normalizedDisplay) {
+          targetEvent.locationDisplay = normalizedDisplay;
           currentTripUpdated = true;
         }
         if (latValue !== null && targetEvent.lat !== latValue) {
@@ -518,9 +541,11 @@ function processPendingGeocodeQueue() {
     const entry = pendingGeocodeQueue[0];
     fetchReverseGeocodedAddress(entry.lat, entry.lon)
       .then((address) => {
-        const normalized = normalizeAddress(address || '');
+        const rawAddress = address || '';
+        const normalized = normalizeAddress(rawAddress);
         if (normalized) {
-          const result = applyGeocodeResult(entry, normalized);
+          const displayAddress = normalizeDisplayAddress(rawAddress);
+          const result = applyGeocodeResult(entry, normalized, displayAddress);
           if (result.logsUpdated) logsUpdated = true;
           if (result.currentTripUpdated) currentTripUpdated = true;
           pendingGeocodeQueue.shift();
@@ -689,6 +714,7 @@ function maintenanceInfoText(entry) {
 let currentTripStartTime = null;
 let currentTripEvents = [];
 let currentTripStartAddress = '';
+let currentTripStartDisplay = '';
 let currentTripStartLat = null;
 let currentTripStartLon = null;
 let currentTripStartOdo = '';
@@ -732,6 +758,7 @@ function startDrivingSegment(timestamp = Date.now()) {
     startTime: startLabel,
     endTime: '',
     location: '',
+    locationDisplay: '',
     lat: null,
     lon: null,
     fuelAmount: '',
@@ -1190,6 +1217,7 @@ function saveCurrentTripState() {
     const payload = {
       startTime: currentTripStartTime.getTime(),
       startAddress: currentTripStartAddress || '',
+      startDisplay: currentTripStartDisplay || '',
       startLat: currentTripStartLat === undefined ? null : currentTripStartLat,
       startLon: currentTripStartLon === undefined ? null : currentTripStartLon,
       startOdo: currentTripStartOdo || '',
@@ -1217,6 +1245,7 @@ function loadCurrentTripState() {
     if (Number.isNaN(startDate.getTime())) return;
     currentTripStartTime = startDate;
     currentTripStartAddress = parsed.startAddress || '';
+    currentTripStartDisplay = normalizeDisplayAddress(parsed.startDisplay ?? parsed.startAddress ?? '');
     currentTripStartLat = parsed.startLat ?? null;
     currentTripStartLon = parsed.startLon ?? null;
     currentTripStartOdo = parsed.startOdo || '';
@@ -1224,11 +1253,13 @@ function loadCurrentTripState() {
     if (Array.isArray(parsed.events)) {
       currentTripEvents = parsed.events.map((ev) => {
         const cargo = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
+        const locationDisplay = normalizeDisplayAddress(ev.locationDisplay ?? ev.location ?? '');
         return {
           ...ev,
           lat: ev.lat ?? null,
           lon: ev.lon ?? null,
-          cargo
+          cargo,
+          locationDisplay
         };
       });
     } else {
@@ -1316,6 +1347,7 @@ function toggleTrip() {
   if (!currentTripStartTime) {
     currentTripStartTime = new Date();
     currentTripStartAddress = '';
+    currentTripStartDisplay = '';
     currentTripStartOdo = '';
     currentTripEvents = [];
     currentTripStartNeedsGeocode = false;
@@ -1342,7 +1374,9 @@ function toggleTrip() {
       const lonValue = isValidCoordinate(resolved.lon) ? resolved.lon : null;
       const needsGeo = !!resolved.needsReverseGeocode;
       currentTripStartNeedsGeocode = needsGeo;
-      currentTripStartAddress = normalizeAddress(resolved.address || '');
+      const resolvedAddress = resolved.address || '';
+      currentTripStartAddress = normalizeAddress(resolvedAddress);
+      currentTripStartDisplay = normalizeDisplayAddress(resolvedAddress);
       currentTripStartLat = latValue;
       currentTripStartLon = lonValue;
       const tripStartMs = currentTripStartTime.getTime();
@@ -1351,6 +1385,7 @@ function toggleTrip() {
         startTime: startTimeStr,
         endTime: '',
         location: currentTripStartAddress,
+        locationDisplay: currentTripStartDisplay,
         lat: latValue,
         lon: lonValue,
         fuelAmount: '',
@@ -1401,7 +1436,9 @@ function toggleTrip() {
       const latValue = isValidCoordinate(resolved.lat) ? resolved.lat : null;
       const lonValue = isValidCoordinate(resolved.lon) ? resolved.lon : null;
       const needsGeo = !!resolved.needsReverseGeocode;
-      const endAddr = normalizeAddress(resolved.address || '');
+      const resolvedAddress = resolved.address || '';
+      const endAddr = normalizeAddress(resolvedAddress);
+      const endDisplay = normalizeDisplayAddress(resolvedAddress);
       const eventTimestamp = endTime.getTime();
       stopDrivingSegment(eventTimestamp);
       currentTripEvents.push({
@@ -1409,6 +1446,7 @@ function toggleTrip() {
         startTime: endTimeStr,
         endTime: '',
         location: endAddr,
+        locationDisplay: endDisplay,
         lat: latValue,
         lon: lonValue,
         fuelAmount: '',
@@ -1427,11 +1465,11 @@ function toggleTrip() {
         endTime: endTimeStr,
         purpose: '',
         start: currentTripStartAddress,
-        startDisplay: currentTripStartAddress,
+        startDisplay: currentTripStartDisplay || currentTripStartAddress,
         startLat: startLatValue,
         startLon: startLonValue,
         end: endAddr,
-        endDisplay: endAddr,
+        endDisplay: endDisplay,
         endLat: latValue,
         endLon: lonValue,
         distance: '',
@@ -1469,6 +1507,7 @@ function toggleTrip() {
       currentTripStartLat = null;
       currentTripStartLon = null;
       currentTripStartNeedsGeocode = false;
+      currentTripStartDisplay = '';
       stopTripDayTicker();
       updateCurrentStatusDisplay();
       clearCurrentTripState();
@@ -1522,6 +1561,16 @@ function loadLogs() {
             e.place,
             e.locationAddress,
             e.locationName
+          ),
+          locationDisplay: normalizeDisplayAddress(
+            e.locationDisplay
+              ?? e.displayAddress
+              ?? e.address
+              ?? e.place
+              ?? e.locationAddress
+              ?? e.locationName
+              ?? e.location
+              ?? ''
           ),
           lat: e.lat !== undefined ? e.lat : null,
           lon: e.lon !== undefined ? e.lon : null,
@@ -1907,7 +1956,8 @@ function formatEvents(events) {
     const locationHtml = formatLocation(ev.location, ev.lat, ev.lon, {
       pending: !!ev.pendingGeocode,
       hideFallback: true,
-      maxLength: 28
+      maxLength: 28,
+      displayAddress: ev.locationDisplay || ''
     });
     const location = locationHtml ? ` ${locationHtml}` : '';
     const timeLabel = time ? `(${time})` : '';
@@ -2088,7 +2138,8 @@ function renderEventList(events, emptyMessage, options = {}) {
           const locationHtml = formatLocation(ev.location, ev.lat, ev.lon, {
             pending: !!ev.pendingGeocode,
             hideFallback: true,
-            maxLength: 28
+            maxLength: 28,
+            displayAddress: ev.locationDisplay || ''
           });
           if (locationHtml) {
             parts.push(`<span class="event-location">${locationHtml}</span>`);
@@ -2433,7 +2484,7 @@ function renderCurrentTripCard() {
     endDate: '',
     endTime: '',
     start: currentTripStartAddress || '',
-    startDisplay: currentTripStartAddress || '',
+    startDisplay: currentTripStartDisplay || currentTripStartAddress || '',
     startLat: currentTripStartLat,
     startLon: currentTripStartLon,
     end: '',
@@ -2553,7 +2604,8 @@ function showDailyReport() {
                 pending: !!ev.pendingGeocode,
                 fallback: '-',
                 maxLength: 28,
-                linkLabel: '地図を見る'
+                linkLabel: '地図を見る',
+                displayAddress: ev.locationDisplay || ''
               });
               const fuelCell = ev.type === '給油' && ev.fuelAmount !== ''
                 ? escapeHtml(String(ev.fuelAmount))
@@ -2739,13 +2791,16 @@ function recordEvent(type) {
     const latValue = isValidCoordinate(resolved.lat) ? resolved.lat : null;
     const lonValue = isValidCoordinate(resolved.lon) ? resolved.lon : null;
     const needsGeo = !!resolved.needsReverseGeocode;
-    const location = normalizeAddress(resolved.address || '');
+    const resolvedAddress = resolved.address || '';
+    const location = normalizeAddress(resolvedAddress);
+    const displayAddress = normalizeDisplayAddress(resolvedAddress);
     stopDrivingSegment(eventTime.getTime());
     const eventObj = {
       type: jpType,
       startTime: timeStr,
       endTime: '',
       location,
+      locationDisplay: displayAddress,
       lat: latValue,
       lon: lonValue,
       fuelAmount: '',
@@ -2794,10 +2849,15 @@ function finishEvent(jpType) {
     const latValue = isValidCoordinate(resolved.lat) ? resolved.lat : null;
     const lonValue = isValidCoordinate(resolved.lon) ? resolved.lon : null;
     const needsGeo = !!resolved.needsReverseGeocode;
-    const location = normalizeAddress(resolved.address || '');
+    const resolvedAddress = resolved.address || '';
+    const location = normalizeAddress(resolvedAddress);
+    const displayAddress = normalizeDisplayAddress(resolvedAddress);
     if (location) {
       ongoing.location = normalizeAddress(ongoing.location || location);
       if (!needsGeo) ongoing.pendingGeocode = false;
+    }
+    if (displayAddress) {
+      ongoing.locationDisplay = displayAddress;
     }
     if (latValue !== null) ongoing.lat = latValue;
     if (lonValue !== null) ongoing.lon = lonValue;
@@ -2858,6 +2918,7 @@ function recordFuelEvent() {
     startTime: timeStr,
     endTime: timeStr,
     location: '',
+    locationDisplay: '',
     lat: null,
     lon: null,
     fuelAmount,
@@ -2875,8 +2936,11 @@ function recordFuelEvent() {
     const latValue = isValidCoordinate(resolved.lat) ? resolved.lat : null;
     const lonValue = isValidCoordinate(resolved.lon) ? resolved.lon : null;
     const needsGeo = !!resolved.needsReverseGeocode;
-    const location = normalizeAddress(resolved.address || '');
+    const resolvedAddress = resolved.address || '';
+    const location = normalizeAddress(resolvedAddress);
+    const displayAddress = normalizeDisplayAddress(resolvedAddress);
     if (location) eventObj.location = location;
+    if (displayAddress) eventObj.locationDisplay = displayAddress;
     if (latValue !== null) eventObj.lat = latValue;
     if (lonValue !== null) eventObj.lon = lonValue;
     eventObj.pendingGeocode = needsGeo;
@@ -3248,7 +3312,7 @@ function buildLogExportMatrix() {
             const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
             if (cargoText) s += ` [荷物: ${cargoText}]`;
           }
-          const location = normalizeAddress(ev.location || '');
+          const location = normalizeDisplayAddress(ev.locationDisplay || ev.location || '');
           if (location) s += `(${location})`;
           if (ev.type === '給油') {
             const amount = ev.fuelAmount !== '' && ev.fuelAmount !== undefined ? `${ev.fuelAmount}L` : '';
