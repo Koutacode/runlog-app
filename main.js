@@ -2338,18 +2338,18 @@ function renderLogReportCard(log, options = {}) {
         <div>
           <dt>出発地</dt>
           <dd>${formatLocation(log.start, log.startLat, log.startLon, {
-            pending: !!log.pendingStartGeocode,
+            pending: false,
             maxLength: 42,
-            displayAddress: log.startDisplay || '',
+            displayAddress: log.startDisplay || log.start || '',
             showNavigationTarget
           })}</dd>
         </div>
         <div>
           <dt>到着地</dt>
           <dd>${formatLocation(log.end, log.endLat, log.endLon, {
-            pending: !!log.pendingEndGeocode,
+            pending: false,
             maxLength: 42,
-            displayAddress: log.endDisplay || '',
+            displayAddress: log.endDisplay || log.end || '',
             showNavigationTarget
           })}</dd>
         </div>
@@ -2727,14 +2727,14 @@ function showDailyReport() {
             .join('')
         : '<tr><td colspan="5"><span class="muted">イベントは記録されていません。</span></td></tr>';
       const startLocation = formatLocation(log.start, log.startLat, log.startLon, {
-        pending: !!log.pendingStartGeocode,
+        pending: false,
         maxLength: 40,
-        displayAddress: log.startDisplay || ''
+        displayAddress: log.startDisplay || log.start || ''
       });
       const endLocation = formatLocation(log.end, log.endLat, log.endLon, {
-        pending: !!log.pendingEndGeocode,
+        pending: false,
         maxLength: 40,
-        displayAddress: log.endDisplay || ''
+        displayAddress: log.endDisplay || log.end || ''
       });
       const startTimeControl = renderInlineTimeControl(log.startTime || '', {
         editable: true,
