@@ -1985,23 +1985,67 @@ function formatLocation(address, lat, lon, options = {}) {
     showMapLink = true,
     linkLabel = '地図を見る',
     showPendingLabel = true,
-    displayAddress = ''
+    displayAddress = '',
+    showNavigationTarget = false,
+    navigationAddress
   } = options;
   const segments = [];
   const normalized = normalizeAddress(address || '');
   const displayOverride = normalizeDisplayAddress(displayAddress);
   const displayValue = displayOverride || normalized;
+  let summary = '';
   if (displayValue) {
-    const summary = summarizeAddress(displayValue, maxLength);
+    summary = summarizeAddress(displayValue, maxLength);
     const safeSummary = escapeHtml(summary);
     const titleSource = displayOverride || normalized;
     const needsTitle = !!titleSource && summary !== titleSource;
     const titleAttr = needsTitle ? ` title="${escapeHtml(titleSource)}"` : '';
     segments.push(`<span class="location-text"${titleAttr}>${safeSummary}</span>`);
   }
+  let navTarget = '';
+  if (showNavigationTarget) {
+    let candidate = '';
+    if (navigationAddress !== undefined && navigationAddress !== null) {
+      candidate = navigationAddress;
+    } else if (displayOverride) {
+      candidate = displayOverride;
+    } else if (normalized) {
+      candidate = normalized;
+    }
+    const normalizedCandidate = normalizeDisplayAddress(candidate);
+    if (normalizedCandidate) {
+      navTarget = normalizedCandidate;
+    } else if (isValidCoordinate(lat) && isValidCoordinate(lon)) {
+      navTarget = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    }
+  }
+  let showNavTargetSegment = false;
+  if (showNavigationTarget && navTarget) {
+    showNavTargetSegment = true;
+    if (displayValue) {
+      const navNormalized = normalizeDisplayAddress(navTarget);
+      const displayNormalized = normalizeDisplayAddress(displayValue);
+      if (
+        navNormalized &&
+        displayNormalized &&
+        navNormalized === displayNormalized &&
+        summary === displayValue
+      ) {
+        showNavTargetSegment = false;
+      }
+    }
+  }
   if (showMapLink) {
     const link = renderLocationLink(lat, lon, { label: linkLabel });
-    if (link) segments.push(link);
+    if (link) {
+      segments.push(link);
+      if (showNavTargetSegment) {
+        const safeNavTarget = escapeHtml(navTarget);
+        segments.push(
+          `<span class="location-nav-target"><span class="location-nav-label">ナビ先:</span><span class="location-nav-value">${safeNavTarget}</span></span>`
+        );
+      }
+    }
   }
   if (pending && showPendingLabel && !displayValue) {
     segments.push('<span class="location-status">住所取得中…</span>');
@@ -2100,7 +2144,7 @@ function renderEventTimeRange(event, options = {}) {
 }
 
 function renderEventList(events, emptyMessage, options = {}) {
-  const { logIndex = -1, allowInlineTimeEdit = false } = options;
+  const { logIndex = -1, allowInlineTimeEdit = false, showNavigationTarget = false } = options;
   if (!Array.isArray(events) || events.length === 0) {
     return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
   }
@@ -2139,7 +2183,8 @@ function renderEventList(events, emptyMessage, options = {}) {
             pending: !!ev.pendingGeocode,
             hideFallback: true,
             maxLength: 28,
-            displayAddress: ev.locationDisplay || ''
+            displayAddress: ev.locationDisplay || '',
+            showNavigationTarget
           });
           if (locationHtml) {
             parts.push(`<span class="event-location">${locationHtml}</span>`);
@@ -2161,7 +2206,8 @@ function renderLogReportCard(log, options = {}) {
     events: overrideEvents = null,
     eventEmptyMessage = null,
     eventCountSuffix = '',
-    allowInlineTimeEdit = false
+    allowInlineTimeEdit = false,
+    showNavigationTarget = false
   } = options;
   const events = Array.isArray(overrideEvents) ? overrideEvents : (log.events || []);
   const startParts = [];
@@ -2183,7 +2229,8 @@ function renderLogReportCard(log, options = {}) {
   const notesBlock = log.notes ? `<p class="report-note"><strong>メモ</strong>${log.notes}</p>` : '';
   const eventsList = renderEventList(events, eventEmptyMessage || 'イベントは記録されていません。', {
     logIndex: index,
-    allowInlineTimeEdit
+    allowInlineTimeEdit,
+    showNavigationTarget
   });
   const countBase = events.length ? `${events.length}件` : '記録なし';
   const eventCountLabel = `${countBase}${eventCountSuffix}`;
@@ -2244,7 +2291,8 @@ function renderLogReportCard(log, options = {}) {
           <dd>${formatLocation(log.start, log.startLat, log.startLon, {
             pending: !!log.pendingStartGeocode,
             maxLength: 42,
-            displayAddress: log.startDisplay || ''
+            displayAddress: log.startDisplay || '',
+            showNavigationTarget
           })}</dd>
         </div>
         <div>
@@ -2252,7 +2300,8 @@ function renderLogReportCard(log, options = {}) {
           <dd>${formatLocation(log.end, log.endLat, log.endLon, {
             pending: !!log.pendingEndGeocode,
             maxLength: 42,
-            displayAddress: log.endDisplay || ''
+            displayAddress: log.endDisplay || '',
+            showNavigationTarget
           })}</dd>
         </div>
         <div>
@@ -2503,7 +2552,8 @@ function renderCurrentTripCard() {
   };
   return renderLogReportCard(pseudoLog, {
     isCurrent: true,
-    eventEmptyMessage: 'まだイベントは記録されていません。'
+    eventEmptyMessage: 'まだイベントは記録されていません。',
+    showNavigationTarget: true
   });
 }
 
@@ -2517,7 +2567,12 @@ function showList() {
     return;
   }
   const cardsHtml = logs
-    .map((log, index) => renderLogReportCard(log, { index, showActions: true, allowInlineTimeEdit: true }))
+    .map((log, index) => renderLogReportCard(log, {
+      index,
+      showActions: true,
+      allowInlineTimeEdit: true,
+      showNavigationTarget: true
+    }))
     .join('');
   const currentCard = currentTripStartTime ? renderCurrentTripCard() : '';
   container.innerHTML = `
@@ -2751,7 +2806,8 @@ function showRecordsByDate() {
           events: eventsForDate,
           eventEmptyMessage: '該当するイベントはありません。',
           eventCountSuffix: '（対象日）',
-          allowInlineTimeEdit: true
+          allowInlineTimeEdit: true,
+          showNavigationTarget: true
         });
       })
       .join('');
