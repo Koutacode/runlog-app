@@ -375,6 +375,27 @@ h2 {
   text-decoration: underline;
 }
 
+.location-nav-target {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-left: 0.3rem;
+  font-size: 0.8rem;
+  color: #475569;
+  min-width: 0;
+}
+
+.location-nav-label {
+  font-weight: 600;
+  color: #334155;
+}
+
+.location-nav-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .location-status {
   font-size: 0.8rem;
   color: #b45309;
