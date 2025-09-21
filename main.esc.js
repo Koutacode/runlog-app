@@ -1903,19 +1903,19 @@ function formatLocation(address, lat, lon, options = {}) {
   }
   let navTarget = '';
   if (showNavigationTarget) {
-    let candidate = '';
-    if (navigationAddress !== undefined && navigationAddress !== null) {
-      candidate = navigationAddress;
-    } else if (displayOverride) {
-      candidate = displayOverride;
-    } else if (normalized) {
-      candidate = normalized;
-    }
-    const normalizedCandidate = normalizeDisplayAddress(candidate);
-    if (normalizedCandidate) {
-      navTarget = normalizedCandidate;
-    } else if (isValidCoordinate(lat) && isValidCoordinate(lon)) {
-      navTarget = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    const navCandidates = [
+      navigationAddress,
+      displayOverride,
+      normalized,
+      summary !== displayValue ? displayValue : '',
+      address
+    ];
+    for (const candidate of navCandidates) {
+      const normalizedCandidate = normalizeDisplayAddress(candidate);
+      if (normalizedCandidate) {
+        navTarget = normalizedCandidate;
+        break;
+      }
     }
   }
   let showNavTargetSegment = false;
