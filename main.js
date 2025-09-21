@@ -506,7 +506,6 @@ function processPendingGeocodeQueue() {
   if (!FLAGS.GEO_LINK) return;
   if (geocodeProcessing) return;
   if (!Array.isArray(pendingGeocodeQueue) || pendingGeocodeQueue.length === 0) return;
-  if (!getGoogleMapsApiKey()) return;
   if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) return;
 
   geocodeProcessing = true;
@@ -1053,24 +1052,16 @@ function configureMapSettings() {
     if (!persisted) {
       alert('APIキーを保存できませんでした。ブラウザの設定を確認してください。');
     } else {
-      alert('APIキーを保存しました。Googleマップのデータで住所を取得します。');
+      alert('APIキーを保存しました。Googleマップを優先して住所を取得します。');
     }
   } else if (!persisted) {
     alert('APIキーの削除を保存できませんでした。ブラウザの設定を確認してください。');
   } else {
-    alert('APIキーを削除しました。住所の自動取得は無効になります。');
+    alert('APIキーを削除しました。Googleマップでの住所取得は無効になりますが、無料の予備サービスで可能な範囲は引き続き住所を取得します。');
   }
 }
 
-function fetchReverseGeocodedAddress(lat, lon) {
-  if (typeof lat !== 'number' || Number.isNaN(lat) || typeof lon !== 'number' || Number.isNaN(lon)) {
-    return Promise.resolve('');
-  }
-  const apiKey = getGoogleMapsApiKey();
-  if (!apiKey) {
-    console.warn('Google Maps API key is not configured. Reverse geocoding will be skipped.');
-    return Promise.resolve('');
-  }
+function fetchGoogleMapsReverseGeocodedAddress(lat, lon, apiKey) {
   const rawParams = { latlng: `${lat},${lon}`, key: apiKey, language: 'ja' };
   let query = '';
   if (typeof URLSearchParams === 'function') {
@@ -1099,10 +1090,71 @@ function fetchReverseGeocodedAddress(lat, lon) {
       const first = data.results[0];
       if (!first || typeof first !== 'object') return '';
       return first.formatted_address || '';
+    });
+}
+
+function fetchHeartRailsReverseGeocodedAddress(lat, lon) {
+  if (typeof fetch !== 'function') {
+    return Promise.resolve('');
+  }
+  const rawParams = { method: 'searchByGeoLocation', x: lon, y: lat };
+  let query = '';
+  if (typeof URLSearchParams === 'function') {
+    const params = new URLSearchParams(rawParams);
+    query = params.toString();
+  } else {
+    query = Object.entries(rawParams)
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&');
+  }
+  const url = `https://geoapi.heartrails.com/api/json?${query}`;
+  return fetch(url)
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.json();
+    })
+    .then((data) => {
+      if (!data || typeof data !== 'object') return '';
+      const response = data.response;
+      if (!response || typeof response !== 'object') return '';
+      const locations = Array.isArray(response.location) ? response.location : null;
+      if (!locations || locations.length === 0) return '';
+      const first = locations[0];
+      if (!first || typeof first !== 'object') return '';
+      const prefecture = typeof first.prefecture === 'string' ? first.prefecture.trim() : '';
+      const city = typeof first.city === 'string' ? first.city.trim() : '';
+      const town = typeof first.town === 'string' ? first.town.trim() : '';
+      const segments = [prefecture, city, town].filter(Boolean);
+      if (segments.length === 0) return '';
+      return segments.join('');
+    })
+    .catch((error) => {
+      console.warn('HeartRails reverse geocoding failed', error);
+      return '';
+    });
+}
+
+function fetchReverseGeocodedAddress(lat, lon) {
+  if (typeof lat !== 'number' || Number.isNaN(lat) || typeof lon !== 'number' || Number.isNaN(lon)) {
+    return Promise.resolve('');
+  }
+  const apiKey = getGoogleMapsApiKey();
+  const fallback = () => fetchHeartRailsReverseGeocodedAddress(lat, lon);
+  if (!apiKey) {
+    return fallback();
+  }
+  return fetchGoogleMapsReverseGeocodedAddress(lat, lon, apiKey)
+    .then((address) => {
+      if (address) {
+        return address;
+      }
+      return fallback();
     })
     .catch((error) => {
       console.warn('Reverse geocoding failed', error);
-      return '';
+      return fallback();
     });
 }
 
@@ -1123,9 +1175,6 @@ function getAccurateLocation() {
       }
       if (navigator && typeof navigator.onLine === 'boolean' && !navigator.onLine) {
         return { address: '', lat, lon, needsReverseGeocode: true };
-      }
-      if (!getGoogleMapsApiKey()) {
-        return { address: '', lat, lon, needsReverseGeocode: false };
       }
       return fetchReverseGeocodedAddress(lat, lon)
         .then((address) => {
