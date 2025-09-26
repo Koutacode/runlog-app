@@ -817,12 +817,32 @@ function stopDrivingSegment(timestamp = Date.now()) {
   }
 }
 
+function updateActiveTaskFinishControl(activeTask) {
+  const btn = document.getElementById('btnFinishActiveTask');
+  if (!btn) return;
+  if (activeTask) {
+    const typeLabel = activeTask.type || '作業';
+    btn.textContent = `${typeLabel}終了`;
+    btn.setAttribute('aria-label', `${typeLabel}を終了する`);
+    btn.dataset.eventType = typeLabel;
+    btn.disabled = false;
+    btn.classList.remove('hidden');
+  } else {
+    btn.textContent = '作業終了';
+    btn.setAttribute('aria-label', '作業を終了する');
+    btn.dataset.eventType = '';
+    btn.disabled = true;
+    btn.classList.add('hidden');
+  }
+}
+
 function updateCurrentStatusDisplay() {
   const indicator = document.getElementById('statusIndicator');
   let label = '停止中';
   let statusClass = 'status-inactive';
+  let activeTask = null;
   if (currentTripStartTime) {
-    const activeTask = findOngoingTaskEvent();
+    activeTask = findOngoingTaskEvent();
     if (activeTask) {
       const cargoText = activeTask.type === '積み込み' && typeof activeTask.cargo === 'string'
         ? activeTask.cargo.trim()
@@ -839,6 +859,7 @@ function updateCurrentStatusDisplay() {
     indicator.classList.remove('status-inactive', 'status-driving', 'status-task');
     indicator.classList.add(statusClass);
   }
+  updateActiveTaskFinishControl(activeTask);
   updateTripDayDisplay();
 }
 
@@ -4080,6 +4101,20 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => schedulePendingGeocodeProcessing(500));
 }
 
+function setupActiveTaskFinishButton() {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('btnFinishActiveTask');
+  if (!btn || btn.dataset.finishHandlerBound === 'true') return;
+  btn.addEventListener('click', () => {
+    const type = btn.dataset.eventType;
+    if (!type) return;
+    btn.disabled = true;
+    btn.classList.add('hidden');
+    finishEvent(type);
+  });
+  btn.dataset.finishHandlerBound = 'true';
+}
+
 function setupMapSettingsButton() {
   if (typeof document === 'undefined') return;
   const btn = document.getElementById('btnMapSettings');
@@ -4122,6 +4157,7 @@ window.addEventListener('load', () => {
   applyDeviceClass();
   updateTripButtonUI();
   restoreEventButtonStates();
+  setupActiveTaskFinishButton();
   if (currentTripStartTime) {
     startTripDayTicker();
   } else {
@@ -4163,4 +4199,5 @@ function applyJapaneseLabels() {
   setText('btnRouteStop', '終了');
   setText('btnRouteWaypoint', '通過点追加');
   setText('statusIndicator', '停止中');
+  setText('btnFinishActiveTask', '作業終了');
 }

@@ -37,7 +37,10 @@
         <span id="toggleLabel">運行開始</span>
       </button>
       <div id="tripDayCounter" class="trip-day hidden" aria-live="polite"></div>
-      <div id="statusIndicator" class="status-indicator status-inactive" aria-live="polite">停止中</div>
+      <div class="status-panel">
+        <div id="statusIndicator" class="status-indicator status-inactive" aria-live="polite">停止中</div>
+        <button id="btnFinishActiveTask" type="button" class="secondary hidden">作業終了</button>
+      </div>
       <div class="route-recorder">
         <button id="btnRouteRecord" type="button" class="route-control">ルート記録開始</button>
         <button id="btnRouteStop" type="button" class="route-control secondary" hidden>終了</button>
