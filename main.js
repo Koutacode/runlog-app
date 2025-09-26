@@ -2868,6 +2868,27 @@ function showRecordsByDate() {
   }
 }
 
+function navigateToRouteHistory() {
+  activeView = 'routes';
+  if (typeof window.showRouteHistory === 'function') {
+    window.showRouteHistory();
+    return;
+  }
+  const content = document.getElementById('content');
+  if (!content) return;
+  content.innerHTML = `
+    <section class="route-history route-history--unavailable">
+      <h2>ルート記録</h2>
+      <p>ルートや場所の記録を表示する機能が読み込まれていません。</p>
+      <p>ページを再読み込みするか、機能が有効かご確認ください。</p>
+    </section>
+  `;
+}
+
+if (typeof window !== 'undefined') {
+  window.navigateToRouteHistory = navigateToRouteHistory;
+}
+
 function recordEvent(type) {
   if (!currentTripStartTime) {
     alert('運行を開始してからイベントを記録してください。');
@@ -3963,6 +3984,9 @@ function refreshActiveView() {
     case 'maintenance':
       showMaintenanceList();
       break;
+    case 'routes':
+      navigateToRouteHistory();
+      break;
     default:
       break;
   }
@@ -4077,7 +4101,7 @@ function applyJapaneseLabels() {
   setText('btnSummary', '集計');
   setText('btnByDate', '日付別');
   setText('btnDaily', '日報');
-  setText('btnHistory', '履歴');
+  setText('btnHistory', 'ルート記録');
   setText('btnExport', 'CSV出力');
   setText('btnMaintenance', '整備記録');
   setText('btnMapSettings', '地図設定');

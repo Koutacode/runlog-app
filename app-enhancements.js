@@ -1339,7 +1339,13 @@ ${tracks}
   function setupHistoryButton(historyView) {
     const button = document.getElementById('btnHistory');
     if (button) {
-      button.addEventListener('click', () => historyView.show());
+      button.addEventListener('click', () => {
+        if (typeof window.navigateToRouteHistory === 'function') {
+          window.navigateToRouteHistory();
+        } else {
+          historyView.show();
+        }
+      });
     }
   }
 
