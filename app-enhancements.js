@@ -862,8 +862,6 @@
               </label>
             </div>
             <div class="history-actions">
-              <button type="button" id="historyExportGPX">選択GPX</button>
-              <button type="button" id="historyExportCSV">選択CSV</button>
               <button type="button" id="historyDeleteSelected" disabled>選択削除</button>
               <button type="button" id="historySaveDrafts" disabled>保存</button>
               <button type="button" id="historyUndo" disabled>取り消し</button>
@@ -918,10 +916,6 @@
           this.refresh();
         });
       }
-      const gpxBtn = document.getElementById('historyExportGPX');
-      if (gpxBtn) gpxBtn.addEventListener('click', () => this.exportSelected('gpx'));
-      const csvBtn = document.getElementById('historyExportCSV');
-      if (csvBtn) csvBtn.addEventListener('click', () => this.exportSelected('csv'));
       const deleteBtn = document.getElementById('historyDeleteSelected');
       if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteSelected());
       const saveBtn = document.getElementById('historySaveDrafts');
@@ -1271,65 +1265,6 @@
       this.refresh();
     }
 
-    exportSelected(format) {
-      if (!this.selection.size) {
-        alert('エクスポートする経路を選択してください。');
-        return;
-      }
-      const routes = this.store.getRoutes().filter((route) => this.selection.has(route.id));
-      if (!routes.length) return;
-      if (format === 'gpx') {
-        const gpx = this.buildGPX(routes);
-        this.downloadFile('routes.gpx', gpx, 'application/gpx+xml');
-      } else {
-        const csv = this.buildCSV(routes);
-        this.downloadFile('routes.csv', csv, 'text/csv');
-      }
-    }
-
-    buildGPX(routes) {
-      const tracks = routes.map((route) => {
-        const points = route.track.map((point) => `      <trkpt lat="${point.lat}" lon="${point.lon}">
-        <time>${new Date(point.time).toISOString()}</time>
-      </trkpt>`).join('\n');
-        return `  <trk>
-      <name>${formatDateTime(route.startAt)}</name>
-${points}
-    </trk>`;
-      }).join('\n');
-      return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Runlog">
-${tracks}
-</gpx>`;
-    }
-
-    buildCSV(routes) {
-      const header = ['routeId', 'timestamp', 'lat', 'lon', 'speed(km/h)'];
-      const rows = [header.join(',')];
-      routes.forEach((route) => {
-        route.track.forEach((point) => {
-          rows.push([
-            csvEscape(route.id),
-            csvEscape(new Date(point.time).toISOString()),
-            point.lat,
-            point.lon,
-            Number.isFinite(point.speed) ? (point.speed * 3.6).toFixed(2) : '',
-          ].join(','));
-        });
-      });
-      return rows.join('\n');
-    }
-
-    downloadFile(filename, data, type) {
-      const blob = new Blob([data], { type: type || 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-    }
-
     openNavigation(route) {
       if (!route.track.length) {
         alert('位置データがありません。');
@@ -1437,9 +1372,6 @@ ${tracks}
       window.requestAnimationFrame(draw);
     }
 
-    buildCSVSelection() {
-      return this.store.getRoutes().filter((route) => this.selection.has(route.id));
-    }
   }
 
   function setupHistoryButton(historyView) {
