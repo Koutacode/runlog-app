@@ -3389,51 +3389,87 @@ function summarizeExportResults(results, contextLabel = '') {
   alert(messages.join('\n'));
 }
 
-function buildLogExportMatrix() {
-  const headers = ['開始日','開始時刻','終了日','終了時刻','開始オドメーター','最終オドメーター','目的','出発地','到着地','距離(km)','費用(円)','メモ','イベント'];
-  const rows = logs.map((log) => {
-    let eventsStr = '';
-    if (log.events && log.events.length) {
-      eventsStr = log.events
-        .map((ev) => {
-          let s = `${ev.startTime || ''}`;
-          if (ev.endTime) s += `～${ev.endTime}`;
-          s += ` ${ev.type || ''}`;
-          if (ev.type === '積み込み') {
-            const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
-            if (cargoText) s += ` [荷物: ${cargoText}]`;
-          }
-          const location = normalizeDisplayAddress(ev.locationDisplay || ev.location || '');
-          if (location) s += `(${location})`;
-          if (ev.type === '給油') {
-            const amount = ev.fuelAmount !== '' && ev.fuelAmount !== undefined ? `${ev.fuelAmount}L` : '';
-            const price = ev.fuelPrice !== '' && ev.fuelPrice !== undefined ? `${ev.fuelPrice}円/L` : '';
-            const details = [amount, price].filter(Boolean).join(', ');
-            if (details) s += `:${details}`;
-          }
-          return s.trim();
-        })
-        .join('; ');
+function formatEventDetailsForExport(ev) {
+  const details = [];
+  if (typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0) {
+    const mins = Math.floor(ev.durationSec / 60);
+    const secs = ev.durationSec % 60;
+    details.push(`${mins}分${secs}秒`);
+  }
+  if (ev.type === '積み込み') {
+    const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
+    if (cargoText) {
+      details.push(`荷物: ${cargoText}`);
     }
+  }
+  if (ev.type === '給油') {
+    const amount = ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null ? `${ev.fuelAmount}L` : '';
+    const price = ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null ? `${ev.fuelPrice}円/L` : '';
+    const fuelDetails = [amount, price].filter(Boolean).join(' / ');
+    if (fuelDetails) details.push(fuelDetails);
+  }
+  return details.join(' / ');
+}
+
+function buildLogExportMatrix() {
+  const headers = [
+    '開始日',
+    '開始時刻',
+    '終了日',
+    '終了時刻',
+    '出発地',
+    '到着地',
+    '目的',
+    '走行メモ',
+    '開始オドメーター',
+    '終了オドメーター',
+    '距離(km)',
+    '費用(円)',
+    'イベント開始',
+    'イベント終了',
+    'イベント種別',
+    'イベント詳細',
+    'イベント地点'
+  ];
+  const rows = [];
+  logs.forEach((log) => {
     const startAddress = normalizeDisplayAddress(log.startDisplay || log.start || '');
     const endAddress = normalizeDisplayAddress(log.endDisplay || log.end || '');
     const distance = log.distance === undefined || log.distance === null ? '' : log.distance;
     const cost = log.cost === undefined || log.cost === null ? '' : log.cost;
-    return [
+    const startOdo = log.startOdo === undefined || log.startOdo === null ? '' : log.startOdo;
+    const endOdo = log.finalOdo === undefined || log.finalOdo === null ? '' : log.finalOdo;
+    const baseColumns = [
       log.startDate || '',
       log.startTime || '',
       log.endDate || '',
       log.endTime || '',
-      log.startOdo || '',
-      log.finalOdo || '',
-      log.purpose || '',
       startAddress,
       endAddress,
-      distance,
-      cost,
+      log.purpose || '',
       log.notes || '',
-      eventsStr
+      startOdo,
+      endOdo,
+      distance,
+      cost
     ];
+    const eventList = Array.isArray(log.events) ? log.events : [];
+    if (eventList.length === 0) {
+      rows.push([...baseColumns, '', '', '', '', '']);
+      return;
+    }
+    eventList.forEach((ev) => {
+      const eventLocation = normalizeDisplayAddress(ev.locationDisplay || ev.location || '');
+      const eventDetails = formatEventDetailsForExport(ev);
+      rows.push([
+        ...baseColumns,
+        ev.startTime || '',
+        ev.endTime || '',
+        ev.type || '',
+        eventDetails,
+        eventLocation
+      ]);
+    });
   });
   return { headers, rows };
 }
