@@ -7,6 +7,7 @@
   <link rel="manifest" href="./manifest.json">
   <link rel="stylesheet" href="./styles.css">
   <script src="./main.esc.js" defer></script>
+  <script src="./app-enhancements.js" defer></script>
   <meta name="theme-color" content="#0066cc">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,6 +21,13 @@
   <link rel="icon" href="./icons/icon-192.png">
 </head>
 <body>
+  <div id="splashScreen" class="splash-screen" role="status" aria-live="polite">
+    <div class="splash-content">
+      <img src="./icons/icon-192.png" alt="アプリのロゴ" width="96" height="96">
+      <p id="splashMessage">起動準備中...</p>
+      <button type="button" id="splashOfflineBtn" class="secondary" hidden>オフラインで開始</button>
+    </div>
+  </div>
   <header>
     <h1>運行管理(K)</h1>
   </header>
@@ -30,10 +38,17 @@
       </button>
       <div id="tripDayCounter" class="trip-day hidden" aria-live="polite"></div>
       <div id="statusIndicator" class="status-indicator status-inactive" aria-live="polite">停止中</div>
+      <div class="route-recorder">
+        <button id="btnRouteRecord" type="button" class="route-control">ルート記録開始</button>
+        <button id="btnRouteStop" type="button" class="route-control secondary" hidden>終了</button>
+        <button id="btnRouteWaypoint" type="button" class="route-control tertiary" hidden>通過点追加</button>
+        <div id="routeStatus" class="route-status" aria-live="polite">未記録</div>
+      </div>
       <button id="btnList" onclick="showList()">一覧</button>
       <button id="btnSummary" onclick="showSummary()">集計</button>
       <button id="btnByDate" onclick="showRecordsByDate()">日付別</button>
       <button id="btnDaily" onclick="showDailyReport()">日報</button>
+      <button id="btnHistory" type="button">履歴</button>
       <button id="btnExport" onclick="exportCSV()">CSV出力</button>
       <button id="btnMaintenance" onclick="showMaintenanceList()">整備記録</button>
       <button id="btnMapSettings" type="button">地図設定</button>
