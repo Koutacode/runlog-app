@@ -3916,6 +3916,9 @@ window.addEventListener('load', () => {
   setupInstallButton();
   setupMapSettingsButton();
   schedulePendingGeocodeProcessing(800);
+  if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function') {
+    document.dispatchEvent(new CustomEvent('runlog:ready'));
+  }
 });
 
 ensureMapSettingsButtonBinding();
@@ -3930,6 +3933,7 @@ function applyJapaneseLabels() {
   setText('btnSummary', '集計');
   setText('btnByDate', '日付別');
   setText('btnDaily', '日報');
+  setText('btnHistory', '履歴');
   setText('btnExport', 'CSV出力');
   setText('btnMaintenance', '整備記録');
   setText('btnMapSettings', '地図設定');
@@ -3939,5 +3943,8 @@ function applyJapaneseLabels() {
   setText('btnFuel', '給油');
   setText('btnBreak', '休憩');
   setText('btnRest', '休息');
+  setText('btnRouteRecord', 'ルート記録開始');
+  setText('btnRouteStop', '終了');
+  setText('btnRouteWaypoint', '通過点追加');
   setText('statusIndicator', '停止中');
 }
