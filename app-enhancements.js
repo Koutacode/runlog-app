@@ -137,9 +137,37 @@
     return date.toISOString().slice(0, 10);
   }
 
+  function formatDateKey(timestamp) {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = String(date.getFullYear());
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function formatDisplayDate(dateKey) {
+    if (!dateKey) return '';
+    const parts = String(dateKey).split('-');
+    if (parts.length !== 3) return dateKey;
+    const [year, month, day] = parts;
+    if (!year || !month || !day) return dateKey;
+    return `${year}/${month}/${day}`;
+  }
+
   function csvEscape(value) {
     const s = value === null || value === undefined ? '' : String(value);
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   class CrashReporter {
@@ -492,8 +520,8 @@
         waypoints: [],
         metadata: {
           type: '走行',
+          name: '',
           memo: '',
-          tags: [],
           startNote: '',
           endNote: '',
         },
@@ -616,6 +644,14 @@
         if (end && !this.activeRoute.metadata.endNote) {
           this.activeRoute.metadata.endNote = `${end.lat.toFixed(5)}, ${end.lon.toFixed(5)}`;
         }
+      }
+      if (!this.activeRoute.metadata) {
+        this.activeRoute.metadata = {};
+      }
+      const defaultName = this.activeRoute.metadata.name || (this.activeRoute.startAt ? formatDateTime(this.activeRoute.startAt) : '');
+      const nameInput = window.prompt('ルート名を入力してください（任意）', defaultName);
+      if (nameInput !== null) {
+        this.activeRoute.metadata.name = nameInput.trim();
       }
       this.store.upsertRoute(this.activeRoute);
       this.store.saveActiveDraft(null);
@@ -768,11 +804,10 @@
       this.store = store;
       this.selectedRouteId = null;
       this.filters = {
-        range: 'all',
         startDate: null,
         endDate: null,
-        tags: new Set(),
-        search: '',
+        name: '',
+        recordedDate: '',
       };
       this.listEl = null;
       this.summaryEl = null;
@@ -802,33 +837,34 @@
     }
 
     template() {
+      const nameOptions = this.getNameOptions().map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+      const dateOptions = this.getDateOptions().map((date) => `<option value="${date}">${escapeHtml(formatDisplayDate(date))}</option>`).join('');
       return `
         <section class="history-container">
-          <h2>履歴</h2>
+          <h2>ルート一覧</h2>
           <div class="history-controls">
             <div class="history-control-group">
-              <label>期間
-                <select id="historyRange">
-                  <option value="all">全件</option>
-                  <option value="day">日別</option>
-                  <option value="week">週別</option>
-                  <option value="month">月別</option>
-                </select>
-              </label>
               <label>開始日<input type="date" id="historyStart"></label>
               <label>終了日<input type="date" id="historyEnd"></label>
             </div>
             <div class="history-control-group">
-              <label>タグ
-                <input type="text" id="historyTags" placeholder="例: 積込,乗船">
+              <label>ルート名
+                <select id="historyName">
+                  <option value="">すべて</option>
+                  ${nameOptions}
+                </select>
               </label>
-              <label>検索
-                <input type="search" id="historySearch" placeholder="地点名・メモ・タグで検索">
+              <label>記録日
+                <select id="historyDate">
+                  <option value="">すべて</option>
+                  ${dateOptions}
+                </select>
               </label>
             </div>
             <div class="history-actions">
               <button type="button" id="historyExportGPX">選択GPX</button>
               <button type="button" id="historyExportCSV">選択CSV</button>
+              <button type="button" id="historyDeleteSelected" disabled>選択削除</button>
               <button type="button" id="historySaveDrafts" disabled>保存</button>
               <button type="button" id="historyUndo" disabled>取り消し</button>
               <button type="button" id="historyRedo" disabled>やり直し</button>
@@ -850,18 +886,10 @@
     }
 
     bindControls() {
-      const rangeEl = document.getElementById('historyRange');
       const startEl = document.getElementById('historyStart');
       const endEl = document.getElementById('historyEnd');
-      const tagEl = document.getElementById('historyTags');
-      const searchEl = document.getElementById('historySearch');
-      if (rangeEl) {
-        rangeEl.value = this.filters.range;
-        rangeEl.addEventListener('change', () => {
-          this.filters.range = rangeEl.value;
-          this.refresh();
-        });
-      }
+      const nameEl = document.getElementById('historyName');
+      const dateEl = document.getElementById('historyDate');
       if (startEl) {
         startEl.value = formatDateInputValue(this.filters.startDate);
         startEl.addEventListener('change', () => {
@@ -876,18 +904,17 @@
           this.refresh();
         });
       }
-      if (tagEl) {
-        tagEl.value = [...this.filters.tags].join(',');
-        tagEl.addEventListener('input', () => {
-          const tags = tagEl.value.split(',').map((tag) => tag.trim()).filter(Boolean);
-          this.filters.tags = new Set(tags);
+      if (nameEl) {
+        nameEl.value = this.filters.name;
+        nameEl.addEventListener('change', () => {
+          this.filters.name = nameEl.value;
           this.refresh();
         });
       }
-      if (searchEl) {
-        searchEl.value = this.filters.search;
-        searchEl.addEventListener('input', () => {
-          this.filters.search = searchEl.value.trim();
+      if (dateEl) {
+        dateEl.value = this.filters.recordedDate;
+        dateEl.addEventListener('change', () => {
+          this.filters.recordedDate = dateEl.value;
           this.refresh();
         });
       }
@@ -895,6 +922,8 @@
       if (gpxBtn) gpxBtn.addEventListener('click', () => this.exportSelected('gpx'));
       const csvBtn = document.getElementById('historyExportCSV');
       if (csvBtn) csvBtn.addEventListener('click', () => this.exportSelected('csv'));
+      const deleteBtn = document.getElementById('historyDeleteSelected');
+      if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteSelected());
       const saveBtn = document.getElementById('historySaveDrafts');
       if (saveBtn) saveBtn.addEventListener('click', () => this.saveDrafts());
       const undoBtn = document.getElementById('historyUndo');
@@ -903,8 +932,54 @@
       if (redoBtn) redoBtn.addEventListener('click', () => this.redo());
     }
 
+    getNameOptions() {
+      const routes = this.store.getRoutes();
+      const names = routes
+        .map((route) => (route.metadata?.name || '').trim())
+        .filter(Boolean);
+      const unique = Array.from(new Set(names));
+      return unique.sort((a, b) => a.localeCompare(b, 'ja-JP'));
+    }
+
+    getDateOptions() {
+      const routes = this.store.getRoutes();
+      const dates = routes
+        .map((route) => formatDateKey(route.startAt))
+        .filter(Boolean);
+      const unique = Array.from(new Set(dates));
+      return unique.sort((a, b) => b.localeCompare(a));
+    }
+
+    updateFilterOptions() {
+      const nameValues = this.getNameOptions();
+      const dateValues = this.getDateOptions();
+      const nameEl = document.getElementById('historyName');
+      if (nameEl) {
+        const nameOptions = ['<option value="">すべて</option>']
+          .concat(nameValues.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`))
+          .join('');
+        nameEl.innerHTML = nameOptions;
+        if (this.filters.name && !nameValues.includes(this.filters.name)) {
+          this.filters.name = '';
+        }
+        nameEl.value = this.filters.name;
+      }
+      const dateEl = document.getElementById('historyDate');
+      if (dateEl) {
+        const dateOptions = ['<option value="">すべて</option>']
+          .concat(dateValues.map((date) => `<option value="${date}">${escapeHtml(formatDisplayDate(date))}</option>`))
+          .join('');
+        dateEl.innerHTML = dateOptions;
+        if (this.filters.recordedDate && !dateValues.includes(this.filters.recordedDate)) {
+          this.filters.recordedDate = '';
+        }
+        dateEl.value = this.filters.recordedDate;
+      }
+    }
+
     refresh() {
       if (!this.summaryEl || !this.listEl) return;
+      this.updateFilterOptions();
       const routes = this.applyFilters(this.store.getRoutes());
       const totals = this.calculateTotals(routes);
       const avgSpeed = totals.duration > 0 ? (totals.distance / 1000) / (totals.duration / 3600000) : 0;
@@ -927,24 +1002,16 @@
 
     applyFilters(routes) {
       return routes.filter((route) => {
-        if (this.filters.startDate && route.startAt < this.filters.startDate) return false;
-        if (this.filters.endDate && route.startAt > this.filters.endDate) return false;
-        if (this.filters.tags.size) {
-          const routeTags = new Set((route.metadata?.tags || []).map((tag) => tag.trim()));
-          let matched = false;
-          this.filters.tags.forEach((tag) => {
-            if (routeTags.has(tag)) matched = true;
-          });
-          if (!matched) return false;
+        const startAt = route.startAt || 0;
+        if (this.filters.startDate && startAt < this.filters.startDate) return false;
+        if (this.filters.endDate && startAt > this.filters.endDate) return false;
+        if (this.filters.name) {
+          const routeName = (route.metadata?.name || '').trim();
+          if (routeName !== this.filters.name) return false;
         }
-        if (this.filters.search) {
-          const text = [
-            route.metadata?.memo || '',
-            route.metadata?.startNote || '',
-            route.metadata?.endNote || '',
-            (route.metadata?.tags || []).join(','),
-          ].join(' ').toLowerCase();
-          if (!text.includes(this.filters.search.toLowerCase())) return false;
+        if (this.filters.recordedDate) {
+          const recorded = formatDateKey(startAt);
+          if (recorded !== this.filters.recordedDate) return false;
         }
         return true;
       });
@@ -968,6 +1035,15 @@
       this.listEl.innerHTML = routes.map((route) => {
         const selected = this.selection.has(route.id);
         const unsaved = drafts[route.id] ? '<span class="history-unsaved">●未保存</span>' : '';
+        const routeName = (route.metadata?.name || '').trim();
+        const title = routeName ? escapeHtml(routeName) : formatDateTime(route.startAt);
+        const metaParts = [];
+        if (routeName) {
+          metaParts.push(formatDateTime(route.startAt));
+        }
+        metaParts.push(formatDistance(route.distance));
+        metaParts.push(formatDuration(route.durationMs));
+        const metaText = metaParts.join(' / ');
         return `
           <div class="history-item" data-route-id="${route.id}">
             <label class="history-item-select">
@@ -975,8 +1051,8 @@
             </label>
             <button type="button" class="history-item-open" data-role="open">詳細</button>
             <div class="history-item-body">
-              <div class="history-item-title">${formatDateTime(route.startAt)}</div>
-              <div class="history-item-meta">${formatDistance(route.distance)} / ${formatDuration(route.durationMs)}</div>
+              <div class="history-item-title">${title}</div>
+              <div class="history-item-meta">${metaText}</div>
             </div>
             ${unsaved}
           </div>
@@ -1012,10 +1088,9 @@
         metadata: {
           ...route.metadata,
           ...draft,
-          tags: draft.tags || route.metadata?.tags || [],
         },
       };
-      const tagsText = (merged.metadata.tags || []).join(', ');
+      const routeName = (merged.metadata.name || '').trim();
       this.detailsEl.innerHTML = `
         <article class="history-detail">
           <header>
@@ -1023,33 +1098,27 @@
             <div>${formatDistance(merged.distance)} / ${formatDuration(merged.durationMs)}</div>
           </header>
           <section class="history-detail-grid">
+            <label>ルート名
+              <input type="text" id="routeName" value="${escapeHtml(routeName)}">
+            </label>
             <label>種別
               <select id="routeType">
                 ${['走行', '積込', '乗船', '休憩', 'その他'].map((type) => `<option value="${type}" ${merged.metadata.type === type ? 'selected' : ''}>${type}</option>`).join('')}
               </select>
             </label>
-            <label>タグ
-              <input type="text" id="routeTags" value="${tagsText}">
-            </label>
             <label>開始メモ
-              <input type="text" id="routeStartNote" value="${merged.metadata.startNote || ''}">
+              <input type="text" id="routeStartNote" value="${escapeHtml(merged.metadata.startNote || '')}">
             </label>
             <label>終了メモ
-              <input type="text" id="routeEndNote" value="${merged.metadata.endNote || ''}">
+              <input type="text" id="routeEndNote" value="${escapeHtml(merged.metadata.endNote || '')}">
             </label>
             <label class="history-detail-full">メモ
-              <textarea id="routeMemo" rows="4">${merged.metadata.memo || ''}</textarea>
+              <textarea id="routeMemo" rows="4">${escapeHtml(merged.metadata.memo || '')}</textarea>
             </label>
           </section>
           <section class="history-detail-actions">
-            <button type="button" id="routeNavBtn">この経路でナビ</button>
-            <button type="button" id="routeReplayBtn">ルート再生</button>
-            <label>速度
-              <input type="range" id="routeReplaySpeed" min="0.5" max="3" step="0.5" value="1">
-            </label>
-          </section>
-          <section>
-            <canvas id="routeReplayCanvas" width="360" height="360" class="history-replay-canvas"></canvas>
+            <button type="button" id="routeNavBtn">このルートでナビ</button>
+            <button type="button" id="routeDeleteBtn">このルートを削除</button>
           </section>
           <section>
             <h4>トラックポイント (${merged.track.length}点)</h4>
@@ -1072,23 +1141,20 @@
     }
 
     bindDetails(route) {
+      const nameEl = document.getElementById('routeName');
       const typeEl = document.getElementById('routeType');
-      const tagsEl = document.getElementById('routeTags');
       const startEl = document.getElementById('routeStartNote');
       const endEl = document.getElementById('routeEndNote');
       const memoEl = document.getElementById('routeMemo');
       const navBtn = document.getElementById('routeNavBtn');
-      const replayBtn = document.getElementById('routeReplayBtn');
-      const speedEl = document.getElementById('routeReplaySpeed');
+      const deleteBtn = document.getElementById('routeDeleteBtn');
+      if (nameEl) nameEl.addEventListener('input', () => this.applyEdit(route.id, { name: nameEl.value }));
       if (typeEl) typeEl.addEventListener('change', () => this.applyEdit(route.id, { type: typeEl.value }));
-      if (tagsEl) tagsEl.addEventListener('input', () => this.applyEdit(route.id, { tags: tagsEl.value.split(',').map((tag) => tag.trim()).filter(Boolean) }));
       if (startEl) startEl.addEventListener('input', () => this.applyEdit(route.id, { startNote: startEl.value }));
       if (endEl) endEl.addEventListener('input', () => this.applyEdit(route.id, { endNote: endEl.value }));
       if (memoEl) memoEl.addEventListener('input', () => this.applyEdit(route.id, { memo: memoEl.value }));
       if (navBtn) navBtn.addEventListener('click', () => this.openNavigation(route));
-      if (replayBtn) replayBtn.addEventListener('click', () => this.startReplay(route));
-      if (speedEl) speedEl.addEventListener('input', () => this.startReplay(route));
-      this.startReplay(route);
+      if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteRoute(route.id));
     }
 
     applyEdit(routeId, patch) {
@@ -1113,7 +1179,6 @@
           metadata: {
             ...route.metadata,
             ...patch,
-            tags: patch.tags || route.metadata?.tags || [],
           },
           updatedAt: Date.now(),
         };
@@ -1163,6 +1228,47 @@
         const history = this.store.getUndoState(this.selectedRouteId);
         redoBtn.disabled = !history.redo.length;
       }
+      const deleteSelectedBtn = document.getElementById('historyDeleteSelected');
+      if (deleteSelectedBtn) {
+        deleteSelectedBtn.disabled = !this.selection.size;
+      }
+      const detailDeleteBtn = document.getElementById('routeDeleteBtn');
+      if (detailDeleteBtn) {
+        detailDeleteBtn.disabled = !this.selectedRouteId;
+      }
+    }
+
+    performDelete(routeId) {
+      if (!routeId) return;
+      this.store.setEditDraft(routeId, null);
+      this.store.saveUndoState(routeId, { undo: [], redo: [] });
+      this.store.removeRoute(routeId);
+      this.selection.delete(routeId);
+      if (this.selectedRouteId === routeId) {
+        this.selectedRouteId = null;
+        if (this.detailsEl) {
+          this.detailsEl.innerHTML = '';
+        }
+      }
+    }
+
+    deleteRoute(routeId) {
+      if (!routeId) return;
+      const route = this.store.getRoutes().find((item) => item.id === routeId);
+      const label = (route?.metadata?.name || '').trim() || formatDateTime(route?.startAt) || 'このルート';
+      if (!window.confirm(`${label} を削除しますか？`)) return;
+      this.performDelete(routeId);
+      this.refresh();
+    }
+
+    deleteSelected() {
+      if (!this.selection.size) return;
+      const count = this.selection.size;
+      if (!window.confirm(`選択した${count}件のルートを削除しますか？`)) return;
+      [...this.selection].forEach((routeId) => {
+        this.performDelete(routeId);
+      });
+      this.refresh();
     }
 
     exportSelected(format) {
