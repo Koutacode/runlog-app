@@ -3425,6 +3425,114 @@ function formatEventDetailsForExport(ev) {
   return details.join(' / ');
 }
 
+function parseTimeToSeconds(timeStr) {
+  if (!timeStr) return null;
+  const trimmed = String(timeStr).trim();
+  if (!trimmed) return null;
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = match[3] !== undefined ? Number(match[3]) : 0;
+  if ([hours, minutes, seconds].some((value) => Number.isNaN(value))) return null;
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function compareDateKeys(a, b) {
+  const aValue = dateStringToUTC(a);
+  const bValue = dateStringToUTC(b);
+  if (aValue !== null && bValue !== null) return aValue - bValue;
+  if (aValue !== null) return -1;
+  if (bValue !== null) return 1;
+  return String(a || '').localeCompare(String(b || ''));
+}
+
+function buildLogExportSheets() {
+  const grouped = new Map();
+  logs.forEach((log, index) => {
+    const key = log.startDate || log.endDate || '未設定';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ log, index });
+  });
+  const sortedKeys = Array.from(grouped.keys()).sort(compareDateKeys);
+  return sortedKeys.map((key) => {
+    const entries = grouped.get(key).slice();
+    entries.sort((a, b) => {
+      const aDate = dateStringToUTC(a.log.startDate || a.log.endDate || '');
+      const bDate = dateStringToUTC(b.log.startDate || b.log.endDate || '');
+      if (aDate !== null && bDate !== null && aDate !== bDate) return aDate - bDate;
+      if (aDate !== null && bDate === null) return -1;
+      if (aDate === null && bDate !== null) return 1;
+      const aTime = parseTimeToSeconds(a.log.startTime || a.log.endTime || '');
+      const bTime = parseTimeToSeconds(b.log.startTime || b.log.endTime || '');
+      if (aTime !== null && bTime !== null && aTime !== bTime) return aTime - bTime;
+      if (aTime !== null && bTime === null) return -1;
+      if (aTime === null && bTime !== null) return 1;
+      return a.index - b.index;
+    });
+    return { name: key || '未設定', entries };
+  });
+}
+
+function buildVerticalLogRowsForLog(log, logIndex) {
+  const rows = [];
+  const startAddress = normalizeDisplayAddress(log.startDisplay || log.start || '');
+  const endAddress = normalizeDisplayAddress(log.endDisplay || log.end || '');
+  const distance = log.distance === undefined || log.distance === null ? '' : log.distance;
+  const cost = log.cost === undefined || log.cost === null ? '' : log.cost;
+  const startOdo = log.startOdo === undefined || log.startOdo === null ? '' : log.startOdo;
+  const endOdo = log.finalOdo === undefined || log.finalOdo === null ? '' : log.finalOdo;
+  rows.push([`記録#${logIndex + 1}`, '']);
+  rows.push(['開始日', log.startDate || '']);
+  rows.push(['開始時刻', log.startTime || '']);
+  rows.push(['終了日', log.endDate || '']);
+  rows.push(['終了時刻', log.endTime || '']);
+  rows.push(['出発地', startAddress]);
+  rows.push(['到着地', endAddress]);
+  rows.push(['目的', log.purpose || '']);
+  rows.push(['走行メモ', log.notes || '']);
+  rows.push(['開始オドメーター', startOdo]);
+  rows.push(['終了オドメーター', endOdo]);
+  rows.push(['距離(km)', distance]);
+  rows.push(['費用(円)', cost]);
+  const eventList = Array.isArray(log.events) ? log.events : [];
+  if (eventList.length === 0) {
+    rows.push(['イベント', '登録なし']);
+  } else {
+    eventList.forEach((ev, eventIndex) => {
+      const prefix = `イベント#${eventIndex + 1}`;
+      const eventLocation = normalizeDisplayAddress(ev.locationDisplay || ev.location || '');
+      const eventDetails = formatEventDetailsForExport(ev);
+      rows.push([`${prefix} 種別`, ev.type || '']);
+      rows.push([`${prefix} 開始`, ev.startTime || '']);
+      rows.push([`${prefix} 終了`, ev.endTime || '']);
+      rows.push([`${prefix} 詳細`, eventDetails]);
+      rows.push([`${prefix} 地点`, eventLocation]);
+    });
+  }
+  return rows;
+}
+
+function buildVerticalLogCsvContent() {
+  const sheets = buildLogExportSheets();
+  if (sheets.length === 0) return '';
+  const lines = [];
+  sheets.forEach((sheet, sheetIndex) => {
+    if (sheetIndex > 0) lines.push('');
+    lines.push([csvEscape('シート名'), csvEscape(sheet.name)].join(','));
+    lines.push([csvEscape('項目'), csvEscape('内容')].join(','));
+    sheet.entries.forEach((entry, logIndex) => {
+      if (logIndex > 0) lines.push('');
+      const logRows = buildVerticalLogRowsForLog(entry.log, logIndex);
+      logRows.forEach((row) => {
+        const [label, value] = row;
+        lines.push([csvEscape(label), csvEscape(value)].join(','));
+      });
+    });
+  });
+  return lines.join('\r\n');
+}
+
 function buildLogExportMatrix() {
   const headers = [
     '開始日',
@@ -3516,7 +3624,7 @@ async function exportCSV() {
   const { headers, rows } = buildLogExportMatrix();
   const format = promptExportFormat('runlog_export_format', '走行記録の出力形式を選択してください。');
   if (!format) return;
-  const csvContent = buildCsvContent(headers, rows);
+  const csvContent = buildVerticalLogCsvContent();
   const tableContent = buildTableContent(headers, rows);
   const year = determineLogExportYear();
   const baseName = `runlog-${year}`;
