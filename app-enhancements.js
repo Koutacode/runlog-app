@@ -22,6 +22,7 @@
     history: null,
     splash: null,
     crashReporter: null,
+    backgroundSync: null,
   };
 
   function safeParse(json, fallback) {
@@ -71,6 +72,131 @@
       localStorage.removeItem(key);
     } catch (error) {
       console.warn('Failed to remove storage', key, error);
+    }
+  }
+
+  class BackgroundStateSync {
+    constructor() {
+      this.registration = null;
+      this.controller = typeof navigator !== 'undefined' && navigator.serviceWorker
+        ? navigator.serviceWorker.controller
+        : null;
+      this.pendingMessages = [];
+      this.pendingRequests = new Map();
+      this.requestSeq = 0;
+      this.readyPromise = this.init();
+      if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+        navigator.serviceWorker.addEventListener('message', (event) => this.handleMessage(event));
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          this.controller = navigator.serviceWorker.controller;
+          this.flushPendingMessages();
+        });
+      }
+    }
+
+    async init() {
+      if (typeof navigator === 'undefined' || !navigator.serviceWorker) return null;
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        this.registration = registration;
+        this.controller = navigator.serviceWorker.controller || this.controller;
+        this.flushPendingMessages();
+        return registration;
+      } catch (error) {
+        console.warn('Background sync registration unavailable', error);
+        return null;
+      }
+    }
+
+    flushPendingMessages() {
+      if (!this.controller || !this.pendingMessages.length) return;
+      const queue = this.pendingMessages.splice(0, this.pendingMessages.length);
+      queue.forEach((message) => {
+        try {
+          this.controller.postMessage(message);
+        } catch (error) {
+          console.warn('Failed to post background sync message', error);
+        }
+      });
+    }
+
+    sendMessage(message) {
+      if (typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+      if (this.controller) {
+        try {
+          this.controller.postMessage(message);
+        } catch (error) {
+          console.warn('Failed to post background sync message', error);
+        }
+      } else {
+        this.pendingMessages.push(message);
+      }
+    }
+
+    async mirrorState(state) {
+      await this.readyPromise;
+      const payload = {
+        namespace: 'runlog-bg',
+        type: 'STATE_UPDATE',
+        state: state ? JSON.parse(JSON.stringify(state)) : {},
+      };
+      this.sendMessage(payload);
+    }
+
+    async requestState() {
+      await this.readyPromise;
+      if (typeof navigator === 'undefined' || !navigator.serviceWorker) return null;
+      const requestId = `req_${Date.now()}_${this.requestSeq += 1}`;
+      const resultPromise = new Promise((resolve) => {
+        const timeoutId = window.setTimeout(() => {
+          if (this.pendingRequests.has(requestId)) {
+            this.pendingRequests.delete(requestId);
+            resolve(null);
+          }
+        }, 3000);
+        this.pendingRequests.set(requestId, { resolve, timeoutId });
+      });
+      this.sendMessage({
+        namespace: 'runlog-bg',
+        type: 'STATE_REQUEST',
+        requestId,
+      });
+      return resultPromise;
+    }
+
+    async registerSync() {
+      const registration = await this.readyPromise;
+      if (!registration || !registration.sync || typeof registration.sync.register !== 'function') {
+        return false;
+      }
+      try {
+        await registration.sync.register('runlog-route-sync');
+        return true;
+      } catch (error) {
+        console.warn('Background sync registration failed', error);
+        return false;
+      }
+    }
+
+    handleMessage(event) {
+      if (!event || !event.data || event.data.namespace !== 'runlog-bg') return;
+      const data = event.data;
+      if (data.type === 'STATE_RESPONSE' && data.requestId) {
+        const entry = this.pendingRequests.get(data.requestId);
+        if (entry) {
+          window.clearTimeout(entry.timeoutId);
+          entry.resolve(data.state || null);
+          this.pendingRequests.delete(data.requestId);
+        }
+        return;
+      }
+      if (data.type === 'SYNC_ERROR') {
+        console.warn('Background sync failed to flush queue', data.error);
+        return;
+      }
+      if (data.type === 'SYNC_COMPLETE') {
+        console.info('Background sync queue flushed', data.processed);
+      }
     }
   }
 
@@ -316,12 +442,15 @@
   }
 
   class RouteStore {
-    constructor() {
+    constructor(backgroundSync) {
+      this.backgroundSync = backgroundSync || null;
       this.routes = storageGet(ROUTE_STORAGE_KEY, []);
       this.activeDraft = storageGet(ROUTE_DRAFT_KEY, null);
       this.editDrafts = storageGet(ROUTE_EDIT_DRAFT_KEY, {});
       this.undoHistory = storageGet(ROUTE_UNDO_KEY, {});
       this.syncQueue = storageGet(SYNC_QUEUE_KEY, []);
+      this.mirrorState();
+      this.requestBackgroundSync();
     }
 
     getRoutes() {
@@ -341,10 +470,14 @@
       this.notify({ route });
     }
 
-    setRoutes(routes) {
+    setRoutes(routes, options = {}) {
       this.routes = [...routes];
       storageSet(ROUTE_STORAGE_KEY, this.routes);
-      this.enqueueSync({ type: 'replace', routes: this.routes.map((route) => route.id) });
+      if (options.skipSyncEnqueue) {
+        this.mirrorState();
+      } else {
+        this.enqueueSync({ type: 'replace', routes: this.routes.map((route) => route.id) });
+      }
       this.notify();
     }
 
@@ -364,6 +497,7 @@
       } else {
         storageRemove(ROUTE_DRAFT_KEY);
       }
+      this.mirrorState();
     }
 
     getEditDraft(routeId) {
@@ -382,6 +516,7 @@
       }
       this.editDrafts = drafts;
       storageSet(ROUTE_EDIT_DRAFT_KEY, drafts);
+      this.mirrorState();
     }
 
     getUndoState(routeId) {
@@ -402,6 +537,7 @@
       };
       this.undoHistory = history;
       storageSet(ROUTE_UNDO_KEY, history);
+      this.mirrorState();
     }
 
     enqueueSync(task) {
@@ -410,6 +546,8 @@
       this.syncQueue.push({ ...task, queuedAt: Date.now() });
       storageSet(SYNC_QUEUE_KEY, this.syncQueue);
       document.dispatchEvent(new CustomEvent('runlog:sync-queued', { detail: { queueLength: this.syncQueue.length } }));
+      this.mirrorState();
+      this.requestBackgroundSync();
     }
 
     markSynced(predicate) {
@@ -420,10 +558,119 @@
       });
       this.syncQueue = remaining;
       storageSet(SYNC_QUEUE_KEY, remaining);
+      this.mirrorState();
     }
 
     notify(detail) {
       document.dispatchEvent(new CustomEvent('runlog:routes-changed', { detail }));
+    }
+
+    mirrorState() {
+      if (!this.backgroundSync) return;
+      const payload = {
+        routes: this.routes,
+        activeDraft: this.activeDraft,
+        syncQueue: this.syncQueue,
+        timestamp: Date.now(),
+      };
+      this.backgroundSync.mirrorState(payload);
+    }
+
+    requestBackgroundSync() {
+      if (!this.backgroundSync) return;
+      if (Array.isArray(this.syncQueue) && this.syncQueue.length) {
+        this.backgroundSync.registerSync();
+      }
+    }
+
+    async restoreFromBackground() {
+      if (!this.backgroundSync) return;
+      try {
+        const state = await this.backgroundSync.requestState();
+        if (!state) return;
+        let changed = false;
+        if (Array.isArray(state.routes) && state.routes.length && (!Array.isArray(this.routes) || !this.routes.length)) {
+          this.routes = state.routes.map((route) => ({ ...route }));
+          storageSet(ROUTE_STORAGE_KEY, this.routes);
+          changed = true;
+        }
+        if (state.activeDraft && !this.activeDraft) {
+          this.activeDraft = { ...state.activeDraft };
+          storageSet(ROUTE_DRAFT_KEY, this.activeDraft);
+          changed = true;
+        }
+        if (Array.isArray(state.syncQueue) && state.syncQueue.length && (!Array.isArray(this.syncQueue) || !this.syncQueue.length)) {
+          this.syncQueue = state.syncQueue.map((task) => ({ ...task }));
+          storageSet(SYNC_QUEUE_KEY, this.syncQueue);
+          this.requestBackgroundSync();
+          changed = true;
+        }
+        if (changed) {
+          this.mirrorState();
+          this.notify();
+        }
+      } catch (error) {
+        console.warn('Failed to restore state from background', error);
+      }
+    }
+  }
+
+  class WakeLockManager {
+    constructor() {
+      this.sentinel = null;
+      this.enabled = false;
+      this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
+    }
+
+    async enable() {
+      if (this.enabled) {
+        if (!this.sentinel) {
+          this.acquire().catch(() => {});
+        }
+        return;
+      }
+      this.enabled = true;
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+      await this.acquire();
+    }
+
+    async disable() {
+      if (!this.enabled) return;
+      this.enabled = false;
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+      if (this.sentinel) {
+        try {
+          await this.sentinel.release();
+        } catch (error) {
+          console.warn('Wake lock release failed', error);
+        }
+        this.sentinel = null;
+      }
+    }
+
+    async acquire() {
+      if (!this.enabled) return;
+      if (typeof navigator === 'undefined' || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') {
+        return;
+      }
+      try {
+        const sentinel = await navigator.wakeLock.request('screen');
+        this.sentinel = sentinel;
+        sentinel.addEventListener('release', () => {
+          this.sentinel = null;
+          if (this.enabled) {
+            this.acquire().catch(() => {});
+          }
+        });
+      } catch (error) {
+        console.warn('Wake lock request failed', error);
+      }
+    }
+
+    async handleVisibilityChange() {
+      if (document.visibilityState === 'visible' && this.enabled && !this.sentinel) {
+        await this.acquire();
+      }
     }
   }
 
@@ -441,6 +688,7 @@
       this.waypointBtn = null;
       this.statusInterval = null;
       this.restored = false;
+      this.wakeLock = new WakeLockManager();
     }
 
     init() {
@@ -462,7 +710,13 @@
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
           this.updateStatus();
+          if (this.state === 'recording') {
+            this.wakeLock.enable().catch(() => {});
+          }
         }
+      });
+      window.addEventListener('beforeunload', () => {
+        this.prepareForUnload();
       });
       this.restoreDraft();
       this.updateUI();
@@ -482,6 +736,7 @@
       this.restored = true;
       if (this.state === 'recording') {
         this.startWatch();
+        this.wakeLock.enable().catch(() => {});
       }
     }
 
@@ -533,6 +788,7 @@
       this.lastPoint = null;
       this.store.saveActiveDraft(route);
       this.startWatch();
+      this.wakeLock.enable().catch(() => {});
       this.updateUI();
       document.dispatchEvent(new CustomEvent('runlog:recording-started', { detail: { routeId: route.id } }));
     }
@@ -588,6 +844,16 @@
       this.clearTicker();
     }
 
+    prepareForUnload() {
+      if (this.activeRoute) {
+        this.activeRoute.updatedAt = Date.now();
+        this.store.saveActiveDraft(this.activeRoute);
+      }
+      if (this.state === 'recording') {
+        this.wakeLock.disable().catch(() => {});
+      }
+    }
+
     ensureTicker() {
       if (this.statusInterval) return;
       this.statusInterval = window.setInterval(() => this.updateStatus(), 1000);
@@ -609,6 +875,7 @@
         this.activeRoute.updatedAt = Date.now();
         this.store.saveActiveDraft(this.activeRoute);
       }
+      this.wakeLock.disable().catch(() => {});
       this.updateUI();
       document.dispatchEvent(new CustomEvent('runlog:recording-paused', { detail: { routeId: this.activeRoute?.id } }));
     }
@@ -622,6 +889,7 @@
         this.store.saveActiveDraft(this.activeRoute);
       }
       this.startWatch();
+      this.wakeLock.enable().catch(() => {});
       this.updateUI();
       document.dispatchEvent(new CustomEvent('runlog:recording-resumed', { detail: { routeId: this.activeRoute?.id } }));
     }
@@ -630,6 +898,7 @@
       if (!this.activeRoute) return;
       if (this.state === 'idle') return;
       this.stopWatch();
+      this.wakeLock.disable().catch(() => {});
       const now = Date.now();
       this.activeRoute.endAt = now;
       this.activeRoute.status = 'completed';
@@ -1387,9 +1656,25 @@
     }
   }
 
+  async function requestPersistentStorage() {
+    if (!navigator.storage || typeof navigator.storage.persist !== 'function') {
+      return;
+    }
+    try {
+      const persisted = await navigator.storage.persisted();
+      if (!persisted) {
+        await navigator.storage.persist();
+      }
+    } catch (error) {
+      console.warn('Persistent storage request failed', error);
+    }
+  }
+
   function bootstrap() {
     appState.crashReporter = new CrashReporter();
-    appState.store = new RouteStore();
+    appState.backgroundSync = new BackgroundStateSync();
+    appState.store = new RouteStore(appState.backgroundSync);
+    appState.store.restoreFromBackground();
     appState.splash = new SplashController();
     appState.recorder = new RouteRecorder(appState.store, appState.crashReporter);
     appState.history = new RouteHistoryView(appState.store);
@@ -1401,6 +1686,8 @@
 
     window.showRouteHistory = () => appState.history.show();
     window.toggleRouteRecording = () => appState.recorder.toggle();
+
+    requestPersistentStorage();
 
     window.addEventListener('online', () => {
       appState.crashReporter.flush();
