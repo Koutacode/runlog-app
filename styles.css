@@ -679,6 +679,14 @@ h2 {
   text-decoration: none;
 }
 
+.inline-link--nav {
+  margin-left: 0.5rem;
+}
+
+.inline-link--nav:first-child {
+  margin-left: 0;
+}
+
 .inline-link:hover,
 .inline-link:focus {
   text-decoration: underline;
