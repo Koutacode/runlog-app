@@ -166,16 +166,14 @@ function buildPlaceLink(lat, lon, zoom = 16) {
   if (typeof URLSearchParams === 'function') {
     const params = new URLSearchParams({
       api: '1',
-      destination: coords,
-      travelmode: 'driving',
-      dir_action: 'navigate'
+      query: coords
     });
     query = params.toString();
   } else {
     const encodedCoords = encodeURIComponent(coords);
-    query = `api=1&destination=${encodedCoords}&travelmode=driving&dir_action=navigate`;
+    query = `api=1&query=${encodedCoords}`;
   }
-  return `https://www.google.com/maps/dir/?${query}`;
+  return `https://www.google.com/maps/search/?${query}`;
 }
 
 function renderLocationLink(lat, lon, options = {}) {
@@ -188,6 +186,39 @@ function renderLocationLink(lat, lon, options = {}) {
   const titleText = customTitle || `${lat.toFixed(5)}, ${lon.toFixed(5)} を地図で表示`;
   const safeTitle = escapeHtml(titleText);
   return `<a class="inline-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
+}
+
+function buildNavigationLink(lat, lon, zoom = 16) {
+  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
+  const latStr = lat.toFixed(6);
+  const lonStr = lon.toFixed(6);
+  const coords = `${latStr},${lonStr}`;
+  let query = '';
+  if (typeof URLSearchParams === 'function') {
+    const params = new URLSearchParams({
+      api: '1',
+      destination: coords,
+      travelmode: 'driving',
+      dir_action: 'navigate'
+    });
+    query = params.toString();
+  } else {
+    const encodedCoords = encodeURIComponent(coords);
+    query = `api=1&destination=${encodedCoords}&travelmode=driving&dir_action=navigate`;
+  }
+  return `https://www.google.com/maps/dir/?${query}`;
+}
+
+function renderNavigationLink(lat, lon, options = {}) {
+  if (!FLAGS.GEO_LINK) return '';
+  if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) return '';
+  const url = buildNavigationLink(lat, lon);
+  if (!url) return '';
+  const { label = 'ナビ開始', title: customTitle = '' } = options;
+  const safeLabel = escapeHtml(label);
+  const titleText = customTitle || `${lat.toFixed(5)}, ${lon.toFixed(5)} までナビを開始`;
+  const safeTitle = escapeHtml(titleText);
+  return `<a class="inline-link inline-link--nav" href="${url}" target="_blank" rel="noopener noreferrer" title="${safeTitle}">${safeLabel}</a>`;
 }
 
 function generateGeocodeId() {
@@ -2033,6 +2064,9 @@ function formatLocation(address, lat, lon, options = {}) {
     maxLength = 32,
     showMapLink = true,
     linkLabel = '地図を見る',
+    showNavigationLink = true,
+    navigationLabel = 'ナビ開始',
+    navigationTitle = '',
     showPendingLabel = true,
     displayAddress = '',
     showNavigationTarget = false,
@@ -2084,17 +2118,31 @@ function formatLocation(address, lat, lon, options = {}) {
       }
     }
   }
+  let hasLink = false;
+  let mapLink = '';
   if (showMapLink) {
-    const link = renderLocationLink(lat, lon, { label: linkLabel });
-    if (link) {
-      segments.push(link);
-      if (showNavTargetSegment) {
-        const safeNavTarget = escapeHtml(navTarget);
-        segments.push(
-          `<span class="location-nav-target"><span class="location-nav-label">ナビ先:</span><span class="location-nav-value">${safeNavTarget}</span></span>`
-        );
-      }
+    mapLink = renderLocationLink(lat, lon, { label: linkLabel });
+    if (mapLink) {
+      segments.push(mapLink);
+      hasLink = true;
     }
+  }
+  let navLink = '';
+  if (showNavigationLink) {
+    navLink = renderNavigationLink(lat, lon, {
+      label: navigationLabel,
+      title: navigationTitle
+    });
+    if (navLink) {
+      segments.push(navLink);
+      hasLink = true;
+    }
+  }
+  if (showNavTargetSegment && hasLink) {
+    const safeNavTarget = escapeHtml(navTarget);
+    segments.push(
+      `<span class="location-nav-target"><span class="location-nav-label">ナビ先:</span><span class="location-nav-value">${safeNavTarget}</span></span>`
+    );
   }
   if (pending && showPendingLabel && !displayValue) {
     segments.push('<span class="location-status">住所取得中…</span>');
