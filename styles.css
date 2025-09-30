@@ -683,6 +683,10 @@ h2 {
   font-size: 0.95rem;
 }
 
+.text-value {
+  font-size: 0.95rem;
+}
+
 .time-editable {
   background: none;
   border: none;
@@ -706,6 +710,29 @@ h2 {
   color: #6b7280;
 }
 
+.text-editable {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #1f365c;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.text-editable:hover {
+  color: #0f3d75;
+}
+
+.text-editable:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.text-editable--empty {
+  color: #6b7280;
+}
+
 .time-separator {
   margin: 0 0.2rem;
   color: #64748b;
@@ -716,6 +743,14 @@ h2 {
 }
 
 .log-time-button {
+  font-size: 1rem;
+}
+
+.event-label-button {
+  font-size: 0.9rem;
+}
+
+.log-purpose-button {
   font-size: 1rem;
 }
 

@@ -19,6 +19,7 @@ let maintenance = [];
 let pendingGeocodeQueue = [];
 let cachedGoogleMapsApiKey = null;
 let inlineTimeEditHandlerBound = false;
+let inlineTextEditHandlerBound = false;
 let geocodeProcessing = false;
 let geocodeProcessingScheduled = false;
 let activeView = 'list';
@@ -2188,8 +2189,48 @@ function renderEventTimeRange(event, options = {}) {
   return `<span class="event-time">${startControl}</span>`;
 }
 
+function renderInlineTextControl(value, options = {}) {
+  const {
+    editable = false,
+    dataset = {},
+    placeholder = '未入力',
+    label = '',
+    displayClass = ''
+  } = options;
+  const rawValue = value === null || value === undefined ? '' : String(value).trim();
+  const hasValue = !!rawValue;
+  const displayText = hasValue ? escapeHtml(rawValue) : escapeHtml(placeholder);
+  if (!editable) {
+    const classes = ['text-value'];
+    if (displayClass) classes.push(displayClass);
+    if (!hasValue) classes.push('muted');
+    return `<span class="${classes.join(' ')}">${displayText}</span>`;
+  }
+  const classes = ['text-editable'];
+  if (displayClass) classes.push(displayClass);
+  if (!hasValue) classes.push('text-editable--empty');
+  const attributes = ['type="button"'];
+  Object.entries(dataset).forEach(([key, rawVal]) => {
+    if (rawVal === undefined || rawVal === null) return;
+    const attrName = toDataAttributeName(key);
+    if (!attrName) return;
+    attributes.push(`data-${attrName}="${escapeHtml(String(rawVal))}"`);
+  });
+  if (label) {
+    const safeLabel = escapeHtml(label);
+    attributes.push(`data-label="${safeLabel}"`);
+    attributes.push(`aria-label="${safeLabel}"`);
+  }
+  return `<button class="${classes.join(' ')}" ${attributes.join(' ')}>${displayText}</button>`;
+}
+
 function renderEventList(events, emptyMessage, options = {}) {
-  const { logIndex = -1, allowInlineTimeEdit = false, showNavigationTarget = false } = options;
+  const {
+    logIndex = -1,
+    allowInlineTimeEdit = false,
+    allowInlineContentEdit = false,
+    showNavigationTarget = false
+  } = options;
   if (!Array.isArray(events) || events.length === 0) {
     return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
   }
@@ -2198,7 +2239,19 @@ function renderEventList(events, emptyMessage, options = {}) {
       ${events
         .map((ev, eventIndex) => {
           const parts = [];
-          parts.push(`<span class="event-label">${ev.type || ''}</span>`);
+          const labelControl = renderInlineTextControl(ev.type || '', {
+            editable: allowInlineContentEdit && logIndex >= 0 && eventIndex >= 0,
+            dataset: {
+              context: 'event',
+              logIndex,
+              eventIndex,
+              field: 'type'
+            },
+            label: 'イベント内容を編集',
+            placeholder: '内容未設定',
+            displayClass: 'event-label-button'
+          });
+          parts.push(`<span class="event-label">${labelControl}</span>`);
           const timeHtml = renderEventTimeRange(ev, {
             allowInlineTimeEdit,
             logIndex,
@@ -2252,6 +2305,7 @@ function renderLogReportCard(log, options = {}) {
     eventEmptyMessage = null,
     eventCountSuffix = '',
     allowInlineTimeEdit = false,
+    allowInlineContentEdit = false,
     showNavigationTarget = false
   } = options;
   const events = Array.isArray(overrideEvents) ? overrideEvents : (log.events || []);
@@ -2275,11 +2329,24 @@ function renderLogReportCard(log, options = {}) {
   const eventsList = renderEventList(events, eventEmptyMessage || 'イベントは記録されていません。', {
     logIndex: index,
     allowInlineTimeEdit,
+    allowInlineContentEdit,
     showNavigationTarget
   });
   const countBase = events.length ? `${events.length}件` : '記録なし';
   const eventCountLabel = `${countBase}${eventCountSuffix}`;
   const timeEditable = allowInlineTimeEdit && index >= 0;
+  const contentEditable = allowInlineContentEdit && index >= 0;
+  const purposeControl = renderInlineTextControl(log.purpose || '', {
+    editable: contentEditable,
+    dataset: {
+      context: 'log',
+      logIndex: index,
+      field: 'purpose'
+    },
+    label: '目的を編集',
+    placeholder: '未入力',
+    displayClass: 'log-purpose-button'
+  });
   const startTimeControl = renderInlineTimeControl(log.startTime || '', {
     editable: timeEditable,
     dataset: {
@@ -2321,7 +2388,7 @@ function renderLogReportCard(log, options = {}) {
       <dl class="report-details">
         <div>
           <dt>目的</dt>
-          <dd>${formatText(log.purpose)}</dd>
+          <dd>${purposeControl}</dd>
         </div>
         <div>
           <dt>開始時刻</dt>
@@ -2400,6 +2467,20 @@ function normalizeTimeInput(value) {
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function requestTextInput(initialValue, label) {
+  const initial = initialValue === null || initialValue === undefined ? '' : String(initialValue);
+  const messageLines = [];
+  if (label) {
+    messageLines.push(`${label}を入力してください。`);
+  } else {
+    messageLines.push('内容を入力してください。');
+  }
+  messageLines.push('空欄で未入力にできます。');
+  const input = prompt(messageLines.join('\n'), initial);
+  if (input === null) return null;
+  return input.trim();
 }
 
 function requestTimeInput(initialValue, label) {
@@ -2505,6 +2586,28 @@ function applyEventTimeUpdate(logIndex, eventIndex, field, newValue) {
   return true;
 }
 
+function applyLogTextUpdate(logIndex, field, newValue) {
+  const log = logs[logIndex];
+  if (!log) return false;
+  const key = field === 'purpose' ? 'purpose' : field;
+  const trimmed = newValue.trim();
+  if (log[key] === trimmed) return false;
+  log[key] = trimmed;
+  return true;
+}
+
+function applyEventTextUpdate(logIndex, eventIndex, field, newValue) {
+  const log = logs[logIndex];
+  if (!log || !Array.isArray(log.events) || eventIndex < 0 || eventIndex >= log.events.length) return false;
+  const event = log.events[eventIndex];
+  if (!event) return false;
+  const key = field === 'type' ? 'type' : field;
+  const trimmed = newValue.trim();
+  if (event[key] === trimmed) return false;
+  event[key] = trimmed;
+  return true;
+}
+
 function findTimeEditableElement(element) {
   if (!element) return null;
   if (typeof element.closest === 'function') {
@@ -2570,6 +2673,76 @@ function ensureInlineTimeEditBinding() {
   });
 }
 
+function findTextEditableElement(element) {
+  if (!element) return null;
+  if (typeof element.closest === 'function') {
+    return element.closest('.text-editable');
+  }
+  let current = element;
+  while (current) {
+    if (current.classList && current.classList.contains('text-editable')) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function handleInlineTextEdit(element) {
+  const context = element.getAttribute('data-context') || '';
+  const field = element.getAttribute('data-field') || '';
+  const label = element.getAttribute('data-label') || '';
+  const logIndexAttr = element.getAttribute('data-log-index');
+  const logIndex = Number(logIndexAttr);
+  if (!Number.isFinite(logIndex) || logIndex < 0 || logIndex >= logs.length) return;
+  if (context === 'log') {
+    const log = logs[logIndex];
+    const currentValue = (log && log[field]) || '';
+    const promptLabel = label || '内容';
+    const newValue = requestTextInput(currentValue, promptLabel);
+    if (newValue === null) return;
+    if (applyLogTextUpdate(logIndex, field, newValue)) {
+      saveLogs();
+      refreshActiveView();
+    }
+    return;
+  }
+  if (context === 'event') {
+    const eventIndexAttr = element.getAttribute('data-event-index');
+    const eventIndex = Number(eventIndexAttr);
+    if (!Number.isFinite(eventIndex) || eventIndex < 0) return;
+    const log = logs[logIndex];
+    if (!log || !Array.isArray(log.events) || !log.events[eventIndex]) return;
+    const event = log.events[eventIndex];
+    const currentValue = event[field] || '';
+    const promptLabel = label || '内容';
+    const newValue = requestTextInput(currentValue, promptLabel);
+    if (newValue === null) return;
+    if (applyEventTextUpdate(logIndex, eventIndex, field, newValue)) {
+      saveLogs();
+      refreshActiveView();
+    }
+  }
+}
+
+function ensureInlineTextEditBinding() {
+  if (inlineTextEditHandlerBound) return;
+  if (typeof document === 'undefined') return;
+  inlineTextEditHandlerBound = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!target) return;
+    const textButton = findTextEditableElement(target);
+    if (!textButton) return;
+    handleInlineTextEdit(textButton);
+  });
+}
+
+function ensureInlineEditBinding() {
+  ensureInlineTimeEditBinding();
+  ensureInlineTextEditBinding();
+}
+
 function renderCurrentTripCard() {
   if (!currentTripStartTime) return '';
   const pseudoLog = {
@@ -2598,6 +2771,7 @@ function renderCurrentTripCard() {
   return renderLogReportCard(pseudoLog, {
     isCurrent: true,
     eventEmptyMessage: 'まだイベントは記録されていません。',
+    allowInlineContentEdit: true,
     showNavigationTarget: true
   });
 }
@@ -2606,7 +2780,7 @@ function showList() {
   activeView = 'list';
   const content = document.getElementById('content');
   if (!content) return;
-  ensureInlineTimeEditBinding();
+  ensureInlineEditBinding();
   if (logs.length === 0 && !currentTripStartTime) {
     content.innerHTML = `
       <div class="view-header">
@@ -2624,6 +2798,7 @@ function showList() {
       index,
       showActions: true,
       allowInlineTimeEdit: true,
+      allowInlineContentEdit: true,
       showNavigationTarget: true
     }))
     .join('');
@@ -2676,7 +2851,7 @@ function showDailyReport() {
   activeView = 'daily';
   const content = document.getElementById('content');
   if (!content) return;
-  ensureInlineTimeEditBinding();
+  ensureInlineEditBinding();
   if (logs.length === 0) {
     content.innerHTML = `
       <div class="view-header">
@@ -2736,11 +2911,23 @@ function showDailyReport() {
               const fuelCell = ev.type === '給油' && ev.fuelAmount !== ''
                 ? `${escapeHtml(String(ev.fuelAmount))}L`
                 : '<span class="muted">-</span>';
+              const labelControl = renderInlineTextControl(ev.type || '', {
+                editable: true,
+                dataset: {
+                  context: 'event',
+                  logIndex,
+                  eventIndex,
+                  field: 'type'
+                },
+                label: 'イベント内容を編集',
+                placeholder: '内容未設定',
+                displayClass: 'event-label-button'
+              });
               return `
                 <tr>
                   <td>${startControl}</td>
                   <td>${endControl}</td>
-                  <td>${escapeHtml(ev.type || '')}</td>
+                  <td>${labelControl}</td>
                   <td>${locationCell}</td>
                   <td>${fuelCell}</td>
                 </tr>
@@ -2780,7 +2967,17 @@ function showDailyReport() {
         placeholder: '--:--',
         displayClass: 'log-time-button'
       });
-      const purposeDetail = formatText(log.purpose);
+      const purposeDetail = renderInlineTextControl(log.purpose || '', {
+        editable: true,
+        dataset: {
+          context: 'log',
+          logIndex,
+          field: 'purpose'
+        },
+        label: '目的を編集',
+        placeholder: '未入力',
+        displayClass: 'log-purpose-button'
+      });
       const notesBlock = log.notes
         ? `<div><dt>メモ</dt><dd>${log.notes.replace(/\n/g, '<br>')}</dd></div>`
         : '';
@@ -2847,7 +3044,7 @@ function showRecordsByDate() {
   activeView = 'by-date';
   const content = document.getElementById('content');
   if (!content) return;
-  ensureInlineTimeEditBinding();
+  ensureInlineEditBinding();
   if (logs.length === 0) {
     content.innerHTML = `
       <div class="view-header">
@@ -2939,6 +3136,7 @@ function showRecordsByDate() {
           eventEmptyMessage: '該当するイベントはありません。',
           eventCountSuffix: '（対象日）',
           allowInlineTimeEdit: true,
+          allowInlineContentEdit: true,
           showNavigationTarget: true
         });
       })
