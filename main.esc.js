@@ -143,8 +143,9 @@ function updateCurrentStatusDisplay() {
   const indicator = document.getElementById('statusIndicator');
   let label = '停止中';
   let statusClass = 'status-inactive';
+  let activeTask = null;
   if (currentTripStartTime) {
-    const activeTask = findOngoingTaskEvent();
+    activeTask = findOngoingTaskEvent();
     if (activeTask) {
       const cargoText = activeTask.type === '積み込み' && typeof activeTask.cargo === 'string'
         ? activeTask.cargo.trim()
@@ -161,7 +162,55 @@ function updateCurrentStatusDisplay() {
     indicator.classList.remove('status-inactive', 'status-driving', 'status-task');
     indicator.classList.add(statusClass);
   }
+  updateActiveTaskFinishControl(activeTask);
   updateTripDayDisplay();
+}
+
+function updateFinishButtonState(btn, activeTask) {
+  if (!btn) return;
+  const defaultLabel = '作業終了';
+  if (activeTask) {
+    const typeLabel = activeTask.type || '作業';
+    btn.textContent = `${typeLabel}終了`;
+    btn.setAttribute('aria-label', `${typeLabel}を終了する`);
+    btn.dataset.eventType = typeLabel;
+    btn.disabled = false;
+    btn.classList.remove('hidden');
+  } else {
+    btn.textContent = defaultLabel;
+    btn.setAttribute('aria-label', '作業を終了する');
+    btn.dataset.eventType = '';
+    btn.disabled = true;
+    btn.classList.add('hidden');
+  }
+}
+
+function updateActiveTaskFinishControl(activeTask) {
+  const buttons = [
+    document.getElementById('btnFinishActiveTask'),
+    document.getElementById('btnFinishActiveTaskBanner')
+  ];
+  buttons.forEach((btn) => updateFinishButtonState(btn, activeTask));
+}
+
+function bindActiveTaskFinishHandler(btn) {
+  if (!btn || btn.dataset.finishHandlerBound === 'true') return;
+  btn.addEventListener('click', () => {
+    const { eventType } = btn.dataset;
+    if (!eventType) return;
+    btn.disabled = true;
+    btn.classList.add('hidden');
+    finishEvent(eventType);
+  });
+  btn.dataset.finishHandlerBound = 'true';
+}
+
+function setupActiveTaskFinishButton() {
+  if (typeof document === 'undefined') return;
+  [
+    document.getElementById('btnFinishActiveTask'),
+    document.getElementById('btnFinishActiveTaskBanner')
+  ].forEach((btn) => bindActiveTaskFinishHandler(btn));
 }
 
 function calculateTripDayNumber(startDate, referenceDate = new Date()) {
@@ -3970,6 +4019,7 @@ window.addEventListener('load', () => {
   applyDeviceClass();
   updateTripButtonUI();
   restoreEventButtonStates();
+  setupActiveTaskFinishButton();
   if (currentTripStartTime) {
     startTripDayTicker();
   } else {
@@ -4011,4 +4061,6 @@ function applyJapaneseLabels() {
   setText('btnRouteStop', '終了');
   setText('btnRouteWaypoint', '通過点追加');
   setText('statusIndicator', '停止中');
+  setText('btnFinishActiveTask', '作業終了');
+  setText('btnFinishActiveTaskBanner', '作業終了');
 }

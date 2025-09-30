@@ -396,6 +396,17 @@
       window.addEventListener('offline', () => this.updateMessage());
       document.addEventListener('runlog:ready', () => this.hide('ready'), { once: true });
       window.addEventListener('load', () => this.hide('load'), { once: true });
+      const hideWhenDomReady = () => {
+        if (!this.visible) return;
+        if (typeof navigator === 'undefined' || navigator.onLine === false) {
+          this.hide('dom-ready');
+        }
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', hideWhenDomReady, { once: true });
+      } else {
+        window.setTimeout(hideWhenDomReady, 0);
+      }
       if (this.offlineBtn) {
         this.offlineBtn.addEventListener('click', () => this.hide('manual'));
       }
