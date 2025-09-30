@@ -817,9 +817,9 @@ function stopDrivingSegment(timestamp = Date.now()) {
   }
 }
 
-function updateActiveTaskFinishControl(activeTask) {
-  const btn = document.getElementById('btnFinishActiveTask');
+function updateFinishButtonState(btn, activeTask) {
   if (!btn) return;
+  const defaultLabel = '作業終了';
   if (activeTask) {
     const typeLabel = activeTask.type || '作業';
     btn.textContent = `${typeLabel}終了`;
@@ -828,12 +828,20 @@ function updateActiveTaskFinishControl(activeTask) {
     btn.disabled = false;
     btn.classList.remove('hidden');
   } else {
-    btn.textContent = '作業終了';
+    btn.textContent = defaultLabel;
     btn.setAttribute('aria-label', '作業を終了する');
     btn.dataset.eventType = '';
     btn.disabled = true;
     btn.classList.add('hidden');
   }
+}
+
+function updateActiveTaskFinishControl(activeTask) {
+  const buttons = [
+    document.getElementById('btnFinishActiveTask'),
+    document.getElementById('btnFinishActiveTaskBanner')
+  ];
+  buttons.forEach((btn) => updateFinishButtonState(btn, activeTask));
 }
 
 function updateCurrentStatusDisplay() {
@@ -4101,18 +4109,24 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => schedulePendingGeocodeProcessing(500));
 }
 
-function setupActiveTaskFinishButton() {
-  if (typeof document === 'undefined') return;
-  const btn = document.getElementById('btnFinishActiveTask');
+function bindActiveTaskFinishHandler(btn) {
   if (!btn || btn.dataset.finishHandlerBound === 'true') return;
   btn.addEventListener('click', () => {
-    const type = btn.dataset.eventType;
-    if (!type) return;
+    const { eventType } = btn.dataset;
+    if (!eventType) return;
     btn.disabled = true;
     btn.classList.add('hidden');
-    finishEvent(type);
+    finishEvent(eventType);
   });
   btn.dataset.finishHandlerBound = 'true';
+}
+
+function setupActiveTaskFinishButton() {
+  if (typeof document === 'undefined') return;
+  [
+    document.getElementById('btnFinishActiveTask'),
+    document.getElementById('btnFinishActiveTaskBanner')
+  ].forEach((btn) => bindActiveTaskFinishHandler(btn));
 }
 
 function setupMapSettingsButton() {
@@ -4200,4 +4214,5 @@ function applyJapaneseLabels() {
   setText('btnRouteWaypoint', '通過点追加');
   setText('statusIndicator', '停止中');
   setText('btnFinishActiveTask', '作業終了');
+  setText('btnFinishActiveTaskBanner', '作業終了');
 }
