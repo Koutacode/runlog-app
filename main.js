@@ -2236,14 +2236,17 @@ function renderEventTimeRange(event, options = {}) {
   const {
     allowInlineTimeEdit = false,
     logIndex = -1,
-    eventIndex = -1
+    eventIndex = -1,
+    forceInlineEdit = false,
+    context = 'event'
   } = options;
-  const editable = allowInlineTimeEdit && logIndex >= 0 && eventIndex >= 0;
+  const hasNumericLogIndex = typeof logIndex === 'number' && Number.isInteger(logIndex) && logIndex >= 0;
+  const editable = allowInlineTimeEdit && (forceInlineEdit || (hasNumericLogIndex && eventIndex >= 0));
   const baseLabel = event.type || 'イベント';
   const startControl = renderInlineTimeControl(event.startTime || '', {
     editable,
     dataset: {
-      context: 'event',
+      context,
       logIndex,
       eventIndex,
       field: 'startTime'
@@ -2255,7 +2258,7 @@ function renderEventTimeRange(event, options = {}) {
   const endControl = renderInlineTimeControl(event.endTime || '', {
     editable,
     dataset: {
-      context: 'event',
+      context,
       logIndex,
       eventIndex,
       field: 'endTime'
@@ -2308,23 +2311,27 @@ function renderInlineTextControl(value, options = {}) {
 function renderEventList(events, emptyMessage, options = {}) {
   const {
     logIndex = -1,
+    logKey = logIndex,
     allowInlineTimeEdit = false,
     allowInlineContentEdit = false,
+    forceInlineEdit = false,
+    eventContext = 'event',
     showNavigationTarget = false
   } = options;
   if (!Array.isArray(events) || events.length === 0) {
     return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
   }
+  const hasNumericLogIndex = typeof logIndex === 'number' && Number.isInteger(logIndex) && logIndex >= 0;
   return `
     <ul class="event-list">
       ${events
         .map((ev, eventIndex) => {
           const parts = [];
           const labelControl = renderInlineTextControl(ev.type || '', {
-            editable: allowInlineContentEdit && logIndex >= 0 && eventIndex >= 0,
+            editable: allowInlineContentEdit && (forceInlineEdit || (hasNumericLogIndex && eventIndex >= 0)),
             dataset: {
-              context: 'event',
-              logIndex,
+              context: eventContext,
+              logIndex: logKey,
               eventIndex,
               field: 'type'
             },
@@ -2335,8 +2342,10 @@ function renderEventList(events, emptyMessage, options = {}) {
           parts.push(`<span class="event-label">${labelControl}</span>`);
           const timeHtml = renderEventTimeRange(ev, {
             allowInlineTimeEdit,
-            logIndex,
-            eventIndex
+            logIndex: logKey,
+            eventIndex,
+            forceInlineEdit,
+            context: eventContext
           });
           if (timeHtml) parts.push(timeHtml);
           if (typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0) {
@@ -2387,7 +2396,10 @@ function renderLogReportCard(log, options = {}) {
     eventCountSuffix = '',
     allowInlineTimeEdit = false,
     allowInlineContentEdit = false,
-    showNavigationTarget = false
+    showNavigationTarget = false,
+    logKey = index,
+    forceEventInlineEdit = false,
+    eventContext = 'event'
   } = options;
   const events = Array.isArray(overrideEvents) ? overrideEvents : (log.events || []);
   const startParts = [];
@@ -2407,10 +2419,15 @@ function renderLogReportCard(log, options = {}) {
   if (contextLabel) headerMetaItems.push(`<span class="report-context">${contextLabel}</span>`);
   const headerMeta = headerMetaItems.length ? `<div class="report-header-meta">${headerMetaItems.join(' ')}</div>` : '';
   const notesBlock = log.notes ? `<p class="report-note"><strong>メモ</strong>${log.notes}</p>` : '';
+  const eventAllowTimeEdit = allowInlineTimeEdit && (index >= 0 || forceEventInlineEdit);
+  const eventAllowContentEdit = allowInlineContentEdit && (index >= 0 || forceEventInlineEdit);
   const eventsList = renderEventList(events, eventEmptyMessage || 'イベントは記録されていません。', {
     logIndex: index,
-    allowInlineTimeEdit,
-    allowInlineContentEdit,
+    logKey,
+    allowInlineTimeEdit: eventAllowTimeEdit,
+    allowInlineContentEdit: eventAllowContentEdit,
+    forceInlineEdit: forceEventInlineEdit,
+    eventContext,
     showNavigationTarget
   });
   const countBase = events.length ? `${events.length}件` : '記録なし';
@@ -2689,6 +2706,40 @@ function applyEventTextUpdate(logIndex, eventIndex, field, newValue) {
   return true;
 }
 
+function resolveCurrentEventTimestampBase(event, timestampField) {
+  const pseudoLog = {
+    startTimestamp: currentTripStartTime ? currentTripStartTime.getTime() : null,
+    endTimestamp: null
+  };
+  return resolveEventTimestampBase(pseudoLog, event, timestampField);
+}
+
+function applyCurrentEventTimeUpdate(eventIndex, field, newValue) {
+  if (!Array.isArray(currentTripEvents) || eventIndex < 0 || eventIndex >= currentTripEvents.length) return false;
+  const event = currentTripEvents[eventIndex];
+  if (!event) return false;
+  const key = field === 'endTime' ? 'endTime' : 'startTime';
+  if (event[key] === newValue) return false;
+  event[key] = newValue;
+  const timestampKey = key === 'endTime' ? 'endTimestamp' : 'startTimestamp';
+  if (!newValue) {
+    event[timestampKey] = null;
+  } else {
+    const base = resolveCurrentEventTimestampBase(event, timestampKey);
+    event[timestampKey] = base !== null ? mergeTimeIntoTimestamp(base, newValue) : null;
+  }
+  if (
+    typeof event.startTimestamp === 'number' && !Number.isNaN(event.startTimestamp) &&
+    typeof event.endTimestamp === 'number' && !Number.isNaN(event.endTimestamp)
+  ) {
+    const diffSec = Math.round((event.endTimestamp - event.startTimestamp) / 1000);
+    event.durationSec = Number.isNaN(diffSec) ? '' : diffSec;
+  } else {
+    event.durationSec = '';
+  }
+  return true;
+}
+
 function findTimeEditableElement(element) {
   if (!element) return null;
   if (typeof element.closest === 'function') {
@@ -2709,6 +2760,22 @@ function handleInlineTimeEdit(element) {
   const field = element.getAttribute('data-field') || '';
   const label = element.getAttribute('data-label') || '';
   const logIndexAttr = element.getAttribute('data-log-index');
+  if (context === 'current-event') {
+    const eventIndexAttr = element.getAttribute('data-event-index');
+    const eventIndex = Number(eventIndexAttr);
+    if (!Number.isFinite(eventIndex) || eventIndex < 0) return;
+    if (!Array.isArray(currentTripEvents) || !currentTripEvents[eventIndex]) return;
+    const event = currentTripEvents[eventIndex];
+    const currentValue = event[field] || '';
+    const promptLabel = label || (field === 'endTime' ? '終了時刻' : '開始時刻');
+    const newValue = requestTimeInput(currentValue, promptLabel);
+    if (newValue === null) return;
+    if (applyCurrentEventTimeUpdate(eventIndex, field, newValue)) {
+      saveCurrentTripState();
+      refreshActiveView();
+    }
+    return;
+  }
   const logIndex = Number(logIndexAttr);
   if (!Number.isFinite(logIndex) || logIndex < 0 || logIndex >= logs.length) return;
   if (context === 'log') {
@@ -2852,8 +2919,12 @@ function renderCurrentTripCard() {
   return renderLogReportCard(pseudoLog, {
     isCurrent: true,
     eventEmptyMessage: 'まだイベントは記録されていません。',
-    allowInlineContentEdit: true,
-    showNavigationTarget: true
+    allowInlineTimeEdit: true,
+    allowInlineContentEdit: false,
+    showNavigationTarget: true,
+    logKey: 'current',
+    forceEventInlineEdit: true,
+    eventContext: 'current-event'
   });
 }
 
