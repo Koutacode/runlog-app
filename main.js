@@ -2445,6 +2445,8 @@ function renderLogReportCard(log, options = {}) {
     placeholder: '未入力',
     displayClass: 'log-purpose-button'
   });
+  const safeStartDate = log.startDate ? escapeHtml(log.startDate) : '';
+  const safeEndDate = log.endDate ? escapeHtml(log.endDate) : '';
   const startTimeControl = renderInlineTimeControl(log.startTime || '', {
     editable: timeEditable,
     dataset: {
@@ -2467,6 +2469,18 @@ function renderLogReportCard(log, options = {}) {
     placeholder: '--:--',
     displayClass: 'log-time-button'
   });
+  const startTimeDisplay = `
+    <div class="time-with-date">
+      ${safeStartDate ? `<span class="time-date">${safeStartDate}</span>` : ''}
+      ${startTimeControl}
+    </div>
+  `.trim();
+  const endTimeDisplay = `
+    <div class="time-with-date">
+      ${safeEndDate ? `<span class="time-date">${safeEndDate}</span>` : ''}
+      ${endTimeControl}
+    </div>
+  `.trim();
   const actions = showActions && index >= 0
     ? `
       <div class="report-footer">
@@ -2490,11 +2504,11 @@ function renderLogReportCard(log, options = {}) {
         </div>
         <div>
           <dt>開始時刻</dt>
-          <dd>${startTimeControl}</dd>
+          <dd>${startTimeDisplay}</dd>
         </div>
         <div>
           <dt>終了時刻</dt>
-          <dd>${endTimeControl}</dd>
+          <dd>${endTimeDisplay}</dd>
         </div>
         <div>
           <dt>出発地</dt>
