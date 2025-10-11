@@ -2243,6 +2243,10 @@ function renderEventTimeRange(event, options = {}) {
   const hasNumericLogIndex = typeof logIndex === 'number' && Number.isInteger(logIndex) && logIndex >= 0;
   const editable = allowInlineTimeEdit && (forceInlineEdit || (hasNumericLogIndex && eventIndex >= 0));
   const baseLabel = event.type || 'イベント';
+  const startDateLabel = timestampToDateString(event.startTimestamp);
+  const endDateLabel = timestampToDateString(event.endTimestamp);
+  const startDateHtml = startDateLabel ? `<span class="event-date">${escapeHtml(startDateLabel)}</span>` : '';
+  const endDateHtml = endDateLabel ? `<span class="event-date">${escapeHtml(endDateLabel)}</span>` : '';
   const startControl = renderInlineTimeControl(event.startTime || '', {
     editable,
     dataset: {
@@ -2268,9 +2272,9 @@ function renderEventTimeRange(event, options = {}) {
     displayClass: 'event-time-button'
   });
   if (editable || event.endTime) {
-    return `<span class="event-time">${startControl}<span class="time-separator">～</span>${endControl}</span>`;
+    return `<span class="event-time">${startDateHtml}${startControl}<span class="time-separator">～</span>${endDateHtml}${endControl}</span>`;
   }
-  return `<span class="event-time">${startControl}</span>`;
+  return `<span class="event-time">${startDateHtml}${startControl}</span>`;
 }
 
 function renderInlineTextControl(value, options = {}) {

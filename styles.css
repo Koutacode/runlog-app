@@ -672,6 +672,15 @@ h2 {
 .event-time {
   font-size: 0.9rem;
   color: #41506a;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.event-date {
+  font-size: 0.85rem;
+  color: #60708d;
 }
 
 .event-duration {
