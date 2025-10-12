@@ -1389,10 +1389,44 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 function applyDeviceClass() {
-  const ua = navigator.userAgent.toLowerCase();
-  const isFold = ua.includes('z fold') || ua.includes('sm-f96') || ua.includes('sm-f97') || (ua.includes('samsung') && ua.includes('fold'));
+  if (typeof document === 'undefined') return;
   const body = document.body;
   if (!body) return;
+
+  const isFoldModelString = (value) => {
+    if (typeof value !== 'string') return false;
+    const lower = value.toLowerCase();
+    if (lower.includes('z fold') || lower.includes('galaxy fold')) {
+      return true;
+    }
+    const modelPattern = /\bsm-f9[0-9]{2}[a-z0-9]*\b/i;
+    return modelPattern.test(value);
+  };
+
+  let isFold = false;
+  if (typeof navigator !== 'undefined') {
+    const uaData = navigator.userAgentData;
+    if (!isFold && uaData && typeof uaData === 'object') {
+      const model = typeof uaData.model === 'string' ? uaData.model : '';
+      if (isFoldModelString(model)) {
+        isFold = true;
+      }
+    }
+
+    if (!isFold) {
+      const uaRaw = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
+      const uaLower = uaRaw.toLowerCase();
+      if (
+        isFoldModelString(uaRaw) ||
+        uaLower.includes('z fold') ||
+        uaLower.includes('galaxy fold') ||
+        (uaLower.includes('samsung') && uaLower.includes('fold'))
+      ) {
+        isFold = true;
+      }
+    }
+  }
+
   body.classList.add(isFold ? 'fold' : 'android');
 }
 
@@ -1401,25 +1435,45 @@ function updateEventButton(jpType, ongoing) {
   if (!map) return;
   const btn = document.getElementById(map.id);
   if (!btn) return;
+  const labelEl = btn.querySelector('.event-menu__label');
   if (ongoing) {
     const endLabel = map.end ?? '終了';
-    btn.textContent = endLabel;
+    if (labelEl) {
+      labelEl.textContent = endLabel;
+    } else {
+      btn.textContent = endLabel;
+    }
     btn.disabled = false;
-    btn.onclick = () => finishEvent(jpType);
+    btn.dataset.eventState = 'active';
   } else {
-    btn.textContent = map.start;
+    if (labelEl) {
+      labelEl.textContent = map.start;
+    } else {
+      btn.textContent = map.start;
+    }
     btn.disabled = false;
-    btn.onclick = () => recordEvent(map.code);
+    btn.dataset.eventState = 'idle';
+  }
+  if ('onclick' in btn) {
+    btn.onclick = null;
   }
 }
 
 function resetEventButtons() {
-  Object.values(eventButtonMap).forEach(({ id, start, code }) => {
+  Object.values(eventButtonMap).forEach(({ id, start }) => {
     const btn = document.getElementById(id);
     if (btn) {
-      btn.textContent = start;
+      const labelEl = btn.querySelector('.event-menu__label');
+      if (labelEl) {
+        labelEl.textContent = start;
+      } else {
+        btn.textContent = start;
+      }
       btn.disabled = false;
-      btn.onclick = () => recordEvent(code);
+      btn.dataset.eventState = 'idle';
+      if ('onclick' in btn) {
+        btn.onclick = null;
+      }
     }
   });
 }
