@@ -4781,14 +4781,24 @@ function applyJapaneseLabels() {
   const waypointBtn = document.getElementById('btnRouteWaypoint');
   if (waypointBtn) waypointBtn.textContent = '通過点追加';
   const exportBtn = document.getElementById('btnExport');
-  if (exportBtn) exportBtn.querySelector('.btn-label')?.textContent = 'CSV出力';
+  if (exportBtn) {
+    const label = exportBtn.querySelector('.btn-label');
+    if (label) label.textContent = 'CSV出力';
+  }
   const mapBtn = document.getElementById('btnMapSettings');
-  if (mapBtn) mapBtn.querySelector('.btn-label')?.textContent = '地図設定';
+  if (mapBtn) {
+    const label = mapBtn.querySelector('.btn-label');
+    if (label) label.textContent = '地図設定';
+  }
   const eventMenuBtn = document.getElementById('btnEventMenu');
-  if (eventMenuBtn) eventMenuBtn.querySelector('.btn-label')?.textContent = 'イベント追加';
+  if (eventMenuBtn) {
+    const label = eventMenuBtn.querySelector('.btn-label');
+    if (label) label.textContent = 'イベント追加';
+  }
   const themeToggle = document.getElementById('themeToggle');
   if (themeToggle) {
-    themeToggle.querySelector('.btn-label')?.textContent = '夜間モード';
+    const label = themeToggle.querySelector('.btn-label');
+    if (label) label.textContent = '夜間モード';
     themeToggle.setAttribute('aria-label', 'ライト／ダークテーマ切り替え');
   }
 }
