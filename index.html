@@ -39,43 +39,108 @@
     disabled
   >作業終了</button>
   <div class="layout">
-    <nav>
-      <button id="toggleTripBtn" class="start" onclick="toggleTrip()">
-        <span id="toggleLabel">運行開始</span>
-      </button>
-      <div id="tripDayCounter" class="trip-day hidden" aria-live="polite"></div>
-      <div class="status-panel">
-        <div id="statusIndicator" class="status-indicator status-inactive" aria-live="polite">停止中</div>
-        <button id="btnFinishActiveTask" type="button" class="secondary hidden">作業終了</button>
+    <nav class="app-nav">
+      <div class="nav-header">
+        <button id="toggleTripBtn" type="button" class="btn btn-primary nav-start">
+          <span class="icon" aria-hidden="true">🚚</span>
+          <span id="toggleLabel" class="btn-label">運行開始</span>
+        </button>
+        <div class="nav-header__meta">
+          <div id="tripDayCounter" class="trip-day hidden" aria-live="polite"></div>
+          <div class="status-panel">
+            <div id="statusIndicator" class="status-indicator status-inactive" aria-live="polite">停止中</div>
+            <button id="btnFinishActiveTask" type="button" class="btn btn-secondary hidden">作業終了</button>
+          </div>
+        </div>
+        <button id="themeToggle" type="button" class="btn btn-ghost" aria-pressed="false">
+          <span class="icon" aria-hidden="true">🌙</span>
+          <span class="btn-label">夜間モード</span>
+        </button>
       </div>
-      <div class="route-recorder">
-        <button id="btnRouteRecord" type="button" class="route-control">ルート記録開始</button>
-        <button id="btnRouteStop" type="button" class="route-control secondary" hidden>終了</button>
-        <button id="btnRouteWaypoint" type="button" class="route-control tertiary" hidden>通過点追加</button>
-        <div id="routeStatus" class="route-status" aria-live="polite">未記録</div>
+      <div class="nav-controls">
+        <div class="route-recorder">
+          <button id="btnRouteRecord" type="button" class="route-control">ルート記録開始</button>
+          <button id="btnRouteStop" type="button" class="route-control route-control--secondary" hidden>終了</button>
+          <button id="btnRouteWaypoint" type="button" class="route-control route-control--tertiary" hidden>通過点追加</button>
+          <div id="routeStatus" class="route-status" aria-live="polite">未記録</div>
+        </div>
+        <div class="nav-tabs" role="tablist">
+          <button type="button" class="nav-tab" data-view="list">
+            <span class="icon" aria-hidden="true">📋</span>
+            <span class="btn-label">一覧</span>
+          </button>
+          <button type="button" class="nav-tab" data-view="summary">
+            <span class="icon" aria-hidden="true">📊</span>
+            <span class="btn-label">集計</span>
+          </button>
+          <button type="button" class="nav-tab" data-view="by-date">
+            <span class="icon" aria-hidden="true">🗓️</span>
+            <span class="btn-label">日付別</span>
+          </button>
+          <button type="button" class="nav-tab" data-view="daily">
+            <span class="icon" aria-hidden="true">📝</span>
+            <span class="btn-label">日報</span>
+          </button>
+          <button type="button" class="nav-tab" data-view="routes">
+            <span class="icon" aria-hidden="true">🗺️</span>
+            <span class="btn-label">ルート記録</span>
+          </button>
+          <button type="button" class="nav-tab" data-view="maintenance">
+            <span class="icon" aria-hidden="true">🔧</span>
+            <span class="btn-label">整備記録</span>
+          </button>
+        </div>
+        <div class="nav-secondary">
+          <button id="btnExport" type="button" class="btn btn-secondary">
+            <span class="icon" aria-hidden="true">⬇️</span>
+            <span class="btn-label">CSV出力</span>
+          </button>
+          <button id="btnMapSettings" type="button" class="btn btn-secondary">
+            <span class="icon" aria-hidden="true">🗺️</span>
+            <span class="btn-label">地図設定</span>
+          </button>
+          <div class="event-menu">
+            <button id="btnEventMenu" type="button" class="btn btn-accent" aria-haspopup="true" aria-expanded="false">
+              <span class="icon" aria-hidden="true">＋</span>
+              <span class="btn-label">イベント追加</span>
+            </button>
+            <div id="eventMenuPanel" class="event-menu__panel" role="menu" hidden>
+              <button type="button" id="btnLoad" class="event-menu__item" data-event="Load">
+                <span class="event-menu__icon" aria-hidden="true">🚚</span>
+                <span class="event-menu__label">積み込み</span>
+              </button>
+              <button type="button" id="btnUnload" class="event-menu__item" data-event="Unload">
+                <span class="event-menu__icon" aria-hidden="true">📦</span>
+                <span class="event-menu__label">荷下ろし</span>
+              </button>
+              <button type="button" id="btnBoard" class="event-menu__item" data-event="Board">
+                <span class="event-menu__icon" aria-hidden="true">🛳️</span>
+                <span class="event-menu__label">乗船</span>
+              </button>
+              <button type="button" id="btnFuel" class="event-menu__item" data-event="Fuel">
+                <span class="event-menu__icon" aria-hidden="true">⛽</span>
+                <span class="event-menu__label">給油</span>
+              </button>
+              <button type="button" id="btnBreak" class="event-menu__item" data-event="Break">
+                <span class="event-menu__icon" aria-hidden="true">☕</span>
+                <span class="event-menu__label">休憩</span>
+              </button>
+              <button type="button" id="btnRest" class="event-menu__item" data-event="Rest">
+                <span class="event-menu__icon" aria-hidden="true">🛏️</span>
+                <span class="event-menu__label">休息</span>
+              </button>
+            </div>
+          </div>
+          <button id="btnInstall" class="btn btn-secondary hidden">インストール</button>
+        </div>
       </div>
-      <button id="btnList" onclick="showList()">一覧</button>
-      <button id="btnSummary" onclick="showSummary()">集計</button>
-      <button id="btnByDate" onclick="showRecordsByDate()">日付別</button>
-      <button id="btnDaily" onclick="showDailyReport()">日報</button>
-      <button id="btnHistory" type="button">ルート記録</button>
-      <button id="btnExport" onclick="exportCSV()">CSV出力</button>
-      <button id="btnMaintenance" onclick="showMaintenanceList()">整備記録</button>
-      <button id="btnMapSettings" type="button">地図設定</button>
-
-      <button id="btnLoad" onclick="recordEvent('Load')">積み込み</button>
-      <button id="btnUnload" onclick="recordEvent('Unload')">荷下ろし</button>
-      <button id="btnBoard" onclick="recordEvent('Board')">乗船</button>
-      <button id="btnFuel" onclick="recordFuelEvent()">給油</button>
-      <button id="btnBreak" onclick="recordEvent('Break')">休憩</button>
-      <button id="btnRest" onclick="recordEvent('Rest')">休息</button>
-      <button id="btnInstall" class="hidden">インストール</button>
     </nav>
     <main id="content">
       <!-- dynamic content -->
     </main>
   </div>
   <div id="overlay" class="overlay hidden">記録中...</div>
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>
 
