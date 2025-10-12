@@ -11,6 +11,7 @@ const FLAGS = {
 
 const PENDING_GEOCODE_STORAGE_KEY = 'runlog_pendingGeocodes';
 const GOOGLE_MAPS_API_KEY_STORAGE_KEY = 'runlog_googleMapsApiKey';
+const THEME_STORAGE_KEY = 'runlog_theme_preference';
 
 // 走行ログ
 let logs = [];
@@ -23,6 +24,7 @@ let inlineTextEditHandlerBound = false;
 let geocodeProcessing = false;
 let geocodeProcessingScheduled = false;
 let activeView = 'list';
+let eventMenuCleanup = null;
 const maintenanceGuidelines = {
   'オイル交換': {
     months: 12,
@@ -2849,6 +2851,7 @@ function renderCurrentTripCard() {
 
 function showList() {
   activeView = 'list';
+  updateNavigationActiveState('list');
   const content = document.getElementById('content');
   if (!content) return;
   ensureInlineEditBinding();
@@ -2899,6 +2902,7 @@ function deleteLog(index) {
 
 function showSummary() {
   activeView = 'summary';
+  updateNavigationActiveState('summary');
   if (logs.length === 0) {
     document.getElementById('content').innerHTML = '<p>記録がありません。</p>';
     return;
@@ -2920,6 +2924,7 @@ function showSummary() {
 
 function showDailyReport() {
   activeView = 'daily';
+  updateNavigationActiveState('daily');
   const content = document.getElementById('content');
   if (!content) return;
   ensureInlineEditBinding();
@@ -3113,6 +3118,7 @@ function showDailyReport() {
 
 function showRecordsByDate() {
   activeView = 'by-date';
+  updateNavigationActiveState('by-date');
   const content = document.getElementById('content');
   if (!content) return;
   ensureInlineEditBinding();
@@ -3222,6 +3228,7 @@ function showRecordsByDate() {
 
 function navigateToRouteHistory() {
   activeView = 'routes';
+  updateNavigationActiveState('routes');
   if (typeof window.showRouteHistory === 'function') {
     window.showRouteHistory();
     return;
@@ -3938,6 +3945,7 @@ async function exportCSV() {
 // メンテナンス
 function showMaintenanceList() {
   activeView = 'maintenance';
+  updateNavigationActiveState('maintenance');
   const content = document.getElementById('content');
   if (!content) return;
   if (maintenance.length === 0) {
@@ -4206,6 +4214,266 @@ function refreshActiveView() {
   }
 }
 
+function handleViewNavigationRequest(view) {
+  switch (view) {
+    case 'list':
+      showList();
+      break;
+    case 'summary':
+      showSummary();
+      break;
+    case 'daily':
+      showDailyReport();
+      break;
+    case 'by-date':
+      showRecordsByDate();
+      break;
+    case 'routes':
+      navigateToRouteHistory();
+      break;
+    case 'maintenance':
+      showMaintenanceList();
+      break;
+    default:
+      break;
+  }
+}
+
+function updateNavigationActiveState(view) {
+  if (typeof document === 'undefined') return;
+  const tabs = document.querySelectorAll('.nav-tab[data-view]');
+  tabs.forEach((tab) => {
+    const matches = tab.dataset.view === view;
+    tab.classList.toggle('is-active', matches);
+    if (matches) {
+      tab.setAttribute('aria-current', 'page');
+    } else {
+      tab.removeAttribute('aria-current');
+    }
+  });
+}
+
+function closeEventMenu() {
+  const menuToggle = document.getElementById('btnEventMenu');
+  const panel = document.getElementById('eventMenuPanel');
+  if (!menuToggle || !panel) return;
+  panel.hidden = true;
+  menuToggle.setAttribute('aria-expanded', 'false');
+  if (typeof eventMenuCleanup === 'function') {
+    eventMenuCleanup();
+    eventMenuCleanup = null;
+  }
+}
+
+function openEventMenu() {
+  const menuToggle = document.getElementById('btnEventMenu');
+  const panel = document.getElementById('eventMenuPanel');
+  if (!menuToggle || !panel) return;
+  panel.hidden = false;
+  menuToggle.setAttribute('aria-expanded', 'true');
+  const firstItem = panel.querySelector('button');
+  if (firstItem && typeof firstItem.focus === 'function') {
+    window.requestAnimationFrame(() => firstItem.focus());
+  }
+  if (eventMenuCleanup) {
+    eventMenuCleanup();
+    eventMenuCleanup = null;
+  }
+  const outsideClickHandler = (event) => {
+    if (!panel.hidden && event && event.target) {
+      if (!panel.contains(event.target) && !menuToggle.contains(event.target)) {
+        closeEventMenu();
+      }
+    }
+  };
+  const keydownHandler = (event) => {
+    if (event && event.key === 'Escape') {
+      closeEventMenu();
+      if (typeof menuToggle.focus === 'function') {
+        menuToggle.focus();
+      }
+    }
+  };
+  document.addEventListener('click', outsideClickHandler);
+  document.addEventListener('keydown', keydownHandler);
+  eventMenuCleanup = () => {
+    document.removeEventListener('click', outsideClickHandler);
+    document.removeEventListener('keydown', keydownHandler);
+  };
+}
+
+function handleEventMenuItemClick(event) {
+  const target = event.currentTarget;
+  if (!target) return;
+  const code = target.dataset.eventCode || target.dataset.event;
+  const jpType = target.dataset.eventType;
+  if (!code) return;
+  event.preventDefault();
+  closeEventMenu();
+  if (target.dataset.eventState === 'active' && jpType) {
+    finishEvent(jpType);
+    return;
+  }
+  if (code === 'Fuel') {
+    recordFuelEvent();
+    return;
+  }
+  recordEvent(code);
+}
+
+function initializeNavigation() {
+  if (typeof document === 'undefined') return;
+  const nav = document.querySelector('.app-nav');
+  if (!nav || nav.dataset.navBound === 'true') {
+    updateNavigationActiveState(activeView);
+    return;
+  }
+
+  const toggleTripBtn = document.getElementById('toggleTripBtn');
+  if (toggleTripBtn) {
+    toggleTripBtn.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      toggleTrip();
+    });
+  }
+
+  const navTabs = nav.querySelectorAll('.nav-tab[data-view]');
+  navTabs.forEach((tab) => {
+    tab.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      const view = tab.dataset.view;
+      if (view) {
+        handleViewNavigationRequest(view);
+      }
+    });
+  });
+
+  const exportBtn = document.getElementById('btnExport');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      exportCSV();
+    });
+  }
+
+  const eventMenuBtn = document.getElementById('btnEventMenu');
+  const eventMenuPanel = document.getElementById('eventMenuPanel');
+  if (eventMenuBtn && eventMenuPanel) {
+    eventMenuBtn.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      if (eventMenuPanel.hidden) {
+        openEventMenu();
+      } else {
+        closeEventMenu();
+      }
+    });
+    const items = eventMenuPanel.querySelectorAll('.event-menu__item');
+    items.forEach((item) => {
+      const jpTypeEntry = Object.entries(eventButtonMap).find(([, map]) => map.id === item.id);
+      if (jpTypeEntry) {
+        const [jpType, map] = jpTypeEntry;
+        item.dataset.eventType = jpType;
+        item.dataset.eventCode = map.code;
+      } else if (item.dataset.event && !item.dataset.eventCode) {
+        item.dataset.eventCode = item.dataset.event;
+      }
+      if (!item.dataset.eventState) {
+        item.dataset.eventState = 'idle';
+      }
+      item.addEventListener('click', handleEventMenuItemClick);
+    });
+  }
+
+  nav.dataset.navBound = 'true';
+  updateNavigationActiveState(activeView);
+}
+
+function initializeThemeToggle() {
+  if (typeof document === 'undefined') return;
+  const toggle = document.getElementById('themeToggle');
+  const root = document.documentElement;
+  if (!root) return;
+
+  const getStoredTheme = () => {
+    try {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      if (stored === 'dark' || stored === 'light') {
+        return stored;
+      }
+    } catch (error) {
+      console.warn('Failed to load theme preference', error);
+    }
+    return null;
+  };
+
+  const persistTheme = (theme) => {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch (error) {
+      console.warn('Failed to store theme preference', error);
+    }
+  };
+
+  const applyTheme = (theme) => {
+    const normalized = theme === 'dark' ? 'dark' : 'light';
+    root.dataset.theme = normalized;
+    if (toggle) {
+      const isDark = normalized === 'dark';
+      toggle.setAttribute('aria-pressed', String(isDark));
+      const icon = toggle.querySelector('.icon');
+      if (icon) {
+        icon.textContent = isDark ? '☀️' : '🌙';
+      }
+      const label = toggle.querySelector('.btn-label');
+      if (label) {
+        label.textContent = isDark ? '昼間モード' : '夜間モード';
+      }
+    }
+  };
+
+  const storedTheme = getStoredTheme();
+  if (storedTheme) {
+    applyTheme(storedTheme);
+  } else if (window.matchMedia) {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(prefersDark ? 'dark' : 'light');
+  } else {
+    applyTheme('light');
+  }
+
+  if (toggle && !toggle.dataset.themeBound) {
+    toggle.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      const isDark = root.dataset.theme === 'dark';
+      const nextTheme = isDark ? 'light' : 'dark';
+      applyTheme(nextTheme);
+      persistTheme(nextTheme);
+    });
+    toggle.dataset.themeBound = 'true';
+  }
+
+  if (window.matchMedia) {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', (event) => {
+        const stored = getStoredTheme();
+        if (stored) return;
+        applyTheme(event.matches ? 'dark' : 'light');
+      });
+    }
+  }
+}
+
 // Service Worker 登録
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
@@ -4286,6 +4554,8 @@ window.addEventListener('load', () => {
   loadCurrentTripState();
   applyJapaneseLabels();
   applyDeviceClass();
+  initializeNavigation();
+  initializeThemeToggle();
   updateTripButtonUI();
   restoreEventButtonStates();
   setupActiveTaskFinishButton();
