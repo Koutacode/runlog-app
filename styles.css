@@ -1,5 +1,42 @@
 :root {
   font-size: clamp(14px, 0.85vw + 12px, 18px);
+  color-scheme: light;
+  --color-bg: #f2f2f2;
+  --color-surface: #ffffff;
+  --color-nav-bg: #e0e0e0;
+  --color-nav-border: rgba(0, 0, 0, 0.08);
+  --color-text: #333333;
+  --color-muted: #5d6369;
+  --color-primary: #0066cc;
+  --color-primary-contrast: #ffffff;
+  --color-accent: #0d8bff;
+  --color-secondary-bg: #ffffff;
+  --color-secondary-border: rgba(0, 0, 0, 0.12);
+  --color-secondary-text: #0d2540;
+  --color-ghost-hover: rgba(0, 0, 0, 0.08);
+  --color-tab-active: #ffffff;
+  --color-tab-active-border: #0066cc;
+  --shadow-elevated: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-nav-bg: #16213c;
+  --color-nav-border: rgba(148, 163, 184, 0.12);
+  --color-text: #e2e8f0;
+  --color-muted: #94a3b8;
+  --color-primary: #38bdf8;
+  --color-primary-contrast: #0f172a;
+  --color-accent: #60a5fa;
+  --color-secondary-bg: #1c2540;
+  --color-secondary-border: rgba(148, 163, 184, 0.2);
+  --color-secondary-text: #e2e8f0;
+  --color-ghost-hover: rgba(148, 163, 184, 0.16);
+  --color-tab-active: #1e293b;
+  --color-tab-active-border: #38bdf8;
+  --shadow-elevated: 0 18px 32px rgba(8, 145, 178, 0.28);
 }
 
 html, body {
@@ -7,35 +44,38 @@ html, body {
 }
 
 body {
-  font-family: sans-serif;
+  font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
   margin: 0;
   padding: 0;
-  background: #f2f2f2;
-  color: #333;
+  background: var(--color-bg);
+  color: var(--color-text);
   font-size: 1rem;
   line-height: 1.6;
-  /* On large screens (e.g. foldable devices when unfolded or tablets),
-     display the navigation and content side by side.  This improves
-     usability by placing frequently used actions within easy reach while
-     still showing the main content.  On smaller screens it remains
-     vertical. */
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
+  transition: background 0.35s ease, color 0.35s ease;
 }
 
 header {
-  background: #0066cc;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
   padding: 1rem;
   text-align: center;
+  box-shadow: var(--shadow-elevated);
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
-nav {
+.app-nav {
   display: flex;
-  justify-content: space-around;
-  background: #e0e0e0;
-  padding: 0.5rem;
-  flex-wrap: wrap; /* allow buttons to wrap to the next line on narrow screens */
+  flex-direction: column;
+  gap: 1rem;
+  background: var(--color-nav-bg);
+  border-bottom: 1px solid var(--color-nav-border);
+  padding: 1rem;
+  box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.06);
 }
 
 .active-task-banner {
@@ -54,6 +94,189 @@ nav {
   cursor: pointer;
   text-align: center;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.nav-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.nav-header__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.nav-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.nav-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.5rem;
+}
+
+.nav-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.5rem 1rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.2s ease, color 0.2s ease;
+  background: var(--color-secondary-bg);
+  color: var(--color-secondary-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.btn:focus-visible {
+  outline: 3px solid rgba(99, 102, 241, 0.4);
+  outline-offset: 2px;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
+}
+
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+  color: var(--color-primary-contrast);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.btn-secondary {
+  background: var(--color-secondary-bg);
+  border-color: var(--color-secondary-border);
+  color: var(--color-secondary-text);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-muted);
+}
+
+.btn-ghost:hover {
+  background: var(--color-ghost-hover);
+  color: var(--color-text);
+}
+
+.btn-accent {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+  color: var(--color-primary-contrast);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-label {
+  white-space: nowrap;
+}
+
+.nav-start {
+  min-width: 11rem;
+  justify-content: flex-start;
+}
+
+.nav-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 0.75rem;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.65rem 0.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.nav-tab:hover {
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--color-text);
+}
+
+.nav-tab.is-active {
+  background: var(--color-tab-active);
+  color: var(--color-primary);
+  border-color: var(--color-tab-active-border);
+  box-shadow: inset 0 -3px 0 var(--color-tab-active-border);
+}
+
+.nav-tab .icon {
+  font-size: 1.1rem;
+}
+
+.event-menu {
+  position: relative;
+}
+
+.event-menu__panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  min-width: 14rem;
+  background: var(--color-surface);
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-elevated);
+  border: 1px solid var(--color-nav-border);
+  padding: 0.5rem 0;
+  display: grid;
+  gap: 0.25rem;
+  z-index: 40;
+}
+
+.event-menu__item {
+  background: none;
+  border: none;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.95rem;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.event-menu__item:hover,
+.event-menu__item:focus-visible {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.event-menu__icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.event-menu__label {
+  flex: 1;
 }
 
 .active-task-banner:hover,
@@ -119,24 +342,6 @@ nav {
   background: rgba(255, 255, 255, 0.1);
 }
 
-nav button {
-  /* Increase padding and font size to create larger, easier to tap controls,
-     following WCAG guidance for a minimum 44×44px touch target.
-     Use flexbox in the button itself to align the icon and label side by side.
-     Larger icons help drivers quickly recognize each function. */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.75rem 1.25rem;
-  font-size: 1.1rem;
-  border: none;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-}
-
 .status-panel {
   display: flex;
   flex-direction: column;
@@ -145,22 +350,18 @@ nav button {
   min-width: 8.5rem;
 }
 
-.status-panel button {
+.status-panel .btn {
   width: 100%;
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
 }
 
-.status-panel button.secondary {
-  background: #d00000;
+.status-panel .btn-secondary {
+  background: linear-gradient(135deg, #ff6b6b, #d00000);
   color: #fff;
+  border-color: transparent;
 }
 
-.status-panel button.secondary:disabled {
-  background: #f4a3a3;
-  color: #fff;
-  cursor: not-allowed;
+:root[data-theme="dark"] .status-panel .btn-secondary {
+  background: linear-gradient(135deg, #f87171, #dc2626);
 }
 
 .route-recorder {
@@ -173,17 +374,18 @@ nav button {
 }
 
 .route-control {
-  background: #023e8a;
+  background: linear-gradient(135deg, #0d6efd, #228be6);
   color: #fff;
   font-weight: 600;
+  border: none;
 }
 
-.route-control.secondary {
-  background: #d00000;
+.route-control--secondary {
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
 }
 
-.route-control.tertiary {
-  background: #2b9348;
+.route-control--tertiary {
+  background: linear-gradient(135deg, #10b981, #059669);
 }
 
 .route-control[hidden] {
@@ -422,7 +624,7 @@ nav button {
   }
 }
 
-nav .status-indicator {
+.app-nav .status-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -430,14 +632,14 @@ nav .status-indicator {
   font-size: 1.05rem;
   font-weight: 600;
   border-radius: 4px;
-  background: #fff;
-  color: #1f365c;
+  background: var(--color-surface);
+  color: var(--color-text);
   box-shadow: 0 1px 2px rgba(0,0,0,0.15);
   min-width: 8.5rem;
   box-sizing: border-box;
 }
 
-nav .trip-day {
+.app-nav .trip-day {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -446,8 +648,8 @@ nav .trip-day {
   padding: 0.6rem 1.2rem;
   font-weight: 600;
   border-radius: 4px;
-  background: #fff;
-  color: #0f3d75;
+  background: var(--color-surface);
+  color: var(--color-text);
   box-shadow: 0 1px 2px rgba(0,0,0,0.15);
   min-width: 8.5rem;
   box-sizing: border-box;
@@ -483,41 +685,13 @@ nav .trip-day {
   display: none;
 }
 
-/* Style the simple emoji icons in the navigation.  Larger font size makes the icons
-   more prominent without needing an external icon font. */
-nav button .icon {
-  font-size: 1.4rem;
-  line-height: 1;
-}
-
-nav button:hover {
-  background: #f5f5f5;
-}
-
-/* Highlight the primary start/stop button so drivers can quickly find it.
-   Use a bold color and larger font, and allow it to flex to fill space. */
-#toggleTripBtn {
-  /* The start/stop button visually differs from other buttons.  When in the
-     "start" state it uses a calming blue.  When recording ("stop" state) it
-     turns red, making it obvious the timer is running.  Flex:1 ensures it
-     expands to fill available space on wide screens. */
-  font-weight: bold;
-  flex: 1;
-  color: #fff;
-}
-
-/* Start state styling */
+/* Legacy toggle button adjustments are handled by utility classes */
 #toggleTripBtn.start {
-  background: #0066cc;
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
 }
 
-#toggleTripBtn.start:hover {
-  background: #005bb5;
-}
-
-/* Stop state styling */
 #toggleTripBtn.stop {
-  background: #cc3300;
+  background: linear-gradient(135deg, #dc2626, #ef4444);
 }
 
 #toggleTripBtn.stop:hover {
@@ -1250,6 +1424,53 @@ form button[type="button"] {
   justify-content: center;
   font-size: 1.5rem;
   z-index: 1000;
+}
+
+.toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 0.75rem;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.toast-message {
+  min-width: 18rem;
+  max-width: clamp(18rem, 40vw, 28rem);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.85rem 1.25rem;
+  border-radius: 0.85rem;
+  box-shadow: var(--shadow-elevated);
+  border: 1px solid var(--color-nav-border);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  opacity: 0;
+  transform: translateY(16px);
+  animation: toast-enter 320ms ease forwards;
+}
+
+.toast-message[data-variant="success"] {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.toast-message[data-variant="error"] {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .overlay.hidden {
