@@ -136,11 +136,6 @@ self.addEventListener('fetch', (event) => {
       return offlinePage || new Response('', { status: 503, statusText: 'Offline' });
     }
 
-    const cachedResponse = await caches.match(request);
-    if (cachedResponse) {
-      return cachedResponse;
-    }
-
     try {
       const networkResponse = await fetch(request);
       if (
@@ -153,6 +148,10 @@ self.addEventListener('fetch', (event) => {
       }
       return networkResponse;
     } catch (err) {
+      const cachedResponse = await caches.match(request);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
       if (request.destination === 'document') {
         const offlinePage = await caches.match('offline.html');
         if (offlinePage) return offlinePage;
