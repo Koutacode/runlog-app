@@ -1481,3 +1481,14 @@ form button[type="button"] {
   display: none !important;
 }
 
+/* Responsive adjustments for theme toggle on small screens */
+@media (max-width: 480px) {
+  #themeToggle .btn-label {
+    display: none;
+  }
+  #themeToggle {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}
+
