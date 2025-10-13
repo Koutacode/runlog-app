@@ -1476,3 +1476,8 @@ form button[type="button"] {
 .overlay.hidden {
   display: none;
 }
+/* Ensure the event menu panel is hidden when the hidden attribute is present */
+.event-menu__panel[hidden] {
+  display: none !important;
+}
+
