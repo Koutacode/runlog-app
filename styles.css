@@ -825,9 +825,66 @@ h2 {
   border-radius: 8px;
   padding: 0.4rem 0.55rem;
   display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.event-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.event-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
   align-items: baseline;
+}
+
+.event-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.event-action-button {
+  background: #ffffff;
+  border: 1px solid #d6deef;
+  border-radius: 6px;
+  color: #1f365c;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.event-action-button:hover {
+  background: #edf2ff;
+  border-color: #b8c6e8;
+}
+
+.event-action-button:focus {
+  outline: 2px solid #94a8e6;
+  outline-offset: 1px;
+}
+
+.event-action-button--delete {
+  background: #fff5f5;
+  border-color: #f4b4ae;
+  color: #b42318;
+}
+
+.event-action-button--delete:hover {
+  background: #ffe8e6;
+  border-color: #e9958d;
 }
 
 .event-label {

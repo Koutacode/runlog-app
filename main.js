@@ -21,6 +21,7 @@ let pendingGeocodeQueue = [];
 let cachedGoogleMapsApiKey = null;
 let inlineTimeEditHandlerBound = false;
 let inlineTextEditHandlerBound = false;
+let eventActionHandlerBound = false;
 let geocodeProcessing = false;
 let geocodeProcessingScheduled = false;
 let activeView = 'list';
@@ -2342,11 +2343,12 @@ function renderEventList(events, emptyMessage, options = {}) {
     return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
   }
   const hasNumericLogIndex = typeof logIndex === 'number' && Number.isInteger(logIndex) && logIndex >= 0;
+  const logKeyValue = logKey === undefined || logKey === null ? '' : String(logKey);
   return `
     <ul class="event-list">
       ${events
         .map((ev, eventIndex) => {
-          const parts = [];
+          const contentParts = [];
           const labelControl = renderInlineTextControl(ev.type || '', {
             editable: allowInlineContentEdit && (forceInlineEdit || (hasNumericLogIndex && eventIndex >= 0)),
             dataset: {
@@ -2359,7 +2361,7 @@ function renderEventList(events, emptyMessage, options = {}) {
             placeholder: '内容未設定',
             displayClass: 'event-label-button'
           });
-          parts.push(`<span class="event-label">${labelControl}</span>`);
+          contentParts.push(`<span class="event-label">${labelControl}</span>`);
           const timeHtml = renderEventTimeRange(ev, {
             allowInlineTimeEdit,
             logIndex: logKey,
@@ -2367,24 +2369,24 @@ function renderEventList(events, emptyMessage, options = {}) {
             forceInlineEdit,
             context: eventContext
           });
-          if (timeHtml) parts.push(timeHtml);
+          if (timeHtml) contentParts.push(timeHtml);
           if (typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0) {
             const mins = Math.floor(ev.durationSec / 60);
             const secs = ev.durationSec % 60;
-            parts.push(`<span class="event-duration">${mins}分${secs}秒</span>`);
+            contentParts.push(`<span class="event-duration">${mins}分${secs}秒</span>`);
           }
           if (ev.type === '給油') {
             if (ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null) {
-              parts.push(`<span class="event-meta">${ev.fuelAmount}L</span>`);
+              contentParts.push(`<span class="event-meta">${ev.fuelAmount}L</span>`);
             }
             if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) {
-              parts.push(`<span class="event-meta">${ev.fuelPrice}円/L</span>`);
+              contentParts.push(`<span class="event-meta">${ev.fuelPrice}円/L</span>`);
             }
           }
           if (ev.type === '積み込み') {
             const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
             if (cargoText) {
-              parts.push(`<span class="event-meta">荷物: ${cargoText}</span>`);
+              contentParts.push(`<span class="event-meta">荷物: ${cargoText}</span>`);
             }
           }
           const locationHtml = formatLocation(ev.location, ev.lat, ev.lon, {
@@ -2395,9 +2397,40 @@ function renderEventList(events, emptyMessage, options = {}) {
             showNavigationTarget
           });
           if (locationHtml) {
-            parts.push(`<span class="event-location">${locationHtml}</span>`);
+            contentParts.push(`<span class="event-location">${locationHtml}</span>`);
           }
-          return `<li>${parts.join(' ')}</li>`;
+          const contentHtml = `<div class="event-content">${contentParts.join(' ')}</div>`;
+          const canModify = eventContext === 'current-event' || hasNumericLogIndex;
+          let actionsHtml = '';
+          if (canModify) {
+            const safeEventContext = escapeHtml(String(eventContext || 'event'));
+            const datasetParts = [
+              `data-event-context="${safeEventContext}"`,
+              `data-event-index="${eventIndex}"`
+            ];
+            if (hasNumericLogIndex) {
+              datasetParts.push(`data-log-index="${escapeHtml(String(logIndex))}"`);
+            } else if (logKeyValue) {
+              datasetParts.push(`data-log-key="${escapeHtml(logKeyValue)}"`);
+            }
+            const buildActionButton = (action, label, extraClass = '', ariaLabel = '') => {
+              const attrs = [
+                'type="button"',
+                `class="event-action-button${extraClass ? ` ${extraClass}` : ''}"`,
+                `data-action="${escapeHtml(action)}"`,
+                ...datasetParts
+              ];
+              if (ariaLabel) {
+                attrs.push(`aria-label="${escapeHtml(ariaLabel)}"`);
+              }
+              return `<button ${attrs.join(' ')}>${escapeHtml(label)}</button>`;
+            };
+            const editButton = buildActionButton('edit', '編集', '', 'イベント内容を変更');
+            const deleteButton = buildActionButton('delete', '削除', 'event-action-button--delete', 'このイベントを削除');
+            actionsHtml = `<div class="event-actions">${editButton}${deleteButton}</div>`;
+          }
+          const rowHtml = actionsHtml ? `<div class="event-row">${contentHtml}${actionsHtml}</div>` : contentHtml;
+          return `<li>${rowHtml}</li>`;
         })
         .join('')}
     </ul>
@@ -2635,6 +2668,34 @@ function requestTimeInput(initialValue, label) {
   }
 }
 
+function requestEventTypeSelection(initialValue) {
+  const entries = Object.entries(eventButtonMap);
+  const messageLines = ['イベント種別を選択してください。'];
+  if (entries.length > 0) {
+    messageLines.push('番号を入力すると候補から選択できます。直接入力も可能です。');
+    entries.forEach(([label], index) => {
+      messageLines.push(`${index + 1}: ${label}`);
+    });
+  } else {
+    messageLines.push('直接入力で種別を指定してください。');
+  }
+  const initial = initialValue === null || initialValue === undefined ? '' : String(initialValue);
+  const input = prompt(messageLines.join('\n'), initial);
+  if (input === null) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  const numeric = Number(trimmed);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= entries.length) {
+    return entries[numeric - 1][0];
+  }
+  const normalized = trimmed.toLowerCase();
+  const labelMatch = entries.find(([label]) => label === trimmed);
+  if (labelMatch) return labelMatch[0];
+  const codeMatch = entries.find(([, map]) => typeof map.code === 'string' && map.code.toLowerCase() === normalized);
+  if (codeMatch) return codeMatch[0];
+  return trimmed;
+}
+
 function mergeTimeIntoTimestamp(baseTimestamp, timeStr) {
   if (typeof baseTimestamp !== 'number' || Number.isNaN(baseTimestamp)) return null;
   if (!timeStr) return null;
@@ -2737,6 +2798,29 @@ function applyEventTextUpdate(logIndex, eventIndex, field, newValue) {
   const trimmed = newValue.trim();
   if (event[key] === trimmed) return false;
   event[key] = trimmed;
+  return true;
+}
+
+function applyCurrentEventTypeUpdate(eventIndex, newValue) {
+  if (!Array.isArray(currentTripEvents) || eventIndex < 0 || eventIndex >= currentTripEvents.length) return false;
+  const event = currentTripEvents[eventIndex];
+  if (!event) return false;
+  const trimmed = typeof newValue === 'string' ? newValue.trim() : '';
+  if (event.type === trimmed) return false;
+  event.type = trimmed;
+  return true;
+}
+
+function deleteLoggedEvent(logIndex, eventIndex) {
+  const log = logs[logIndex];
+  if (!log || !Array.isArray(log.events) || eventIndex < 0 || eventIndex >= log.events.length) return false;
+  log.events.splice(eventIndex, 1);
+  return true;
+}
+
+function deleteCurrentEvent(eventIndex) {
+  if (!Array.isArray(currentTripEvents) || eventIndex < 0 || eventIndex >= currentTripEvents.length) return false;
+  currentTripEvents.splice(eventIndex, 1);
   return true;
 }
 
@@ -2925,6 +3009,88 @@ function ensureInlineEditBinding() {
   ensureInlineTextEditBinding();
 }
 
+function findEventActionButton(element) {
+  if (!element) return null;
+  if (typeof element.closest === 'function') {
+    return element.closest('.event-action-button');
+  }
+  let current = element;
+  while (current) {
+    if (current.classList && current.classList.contains('event-action-button')) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function handleEventAction(element) {
+  const action = element.getAttribute('data-action') || '';
+  const context = element.getAttribute('data-event-context') || 'event';
+  const eventIndexAttr = element.getAttribute('data-event-index');
+  const eventIndex = Number(eventIndexAttr);
+  if (!Number.isFinite(eventIndex) || eventIndex < 0) return;
+  if (context === 'current-event') {
+    if (!Array.isArray(currentTripEvents) || !currentTripEvents[eventIndex]) return;
+    if (action === 'delete') {
+      if (!confirm('このイベントを削除しますか？')) return;
+      if (deleteCurrentEvent(eventIndex)) {
+        saveCurrentTripState();
+        restoreEventButtonStates();
+        refreshActiveView();
+      }
+      return;
+    }
+    if (action === 'edit') {
+      const event = currentTripEvents[eventIndex];
+      const currentType = event && event.type ? event.type : '';
+      const nextType = requestEventTypeSelection(currentType);
+      if (nextType === null) return;
+      if (applyCurrentEventTypeUpdate(eventIndex, nextType)) {
+        saveCurrentTripState();
+        restoreEventButtonStates();
+        refreshActiveView();
+      }
+    }
+    return;
+  }
+  const logIndexAttr = element.getAttribute('data-log-index');
+  const logIndex = Number(logIndexAttr);
+  if (!Number.isFinite(logIndex) || logIndex < 0 || logIndex >= logs.length) return;
+  if (!logs[logIndex] || !Array.isArray(logs[logIndex].events) || !logs[logIndex].events[eventIndex]) return;
+  if (action === 'delete') {
+    if (!confirm('このイベントを削除しますか？')) return;
+    if (deleteLoggedEvent(logIndex, eventIndex)) {
+      saveLogs();
+      refreshActiveView();
+    }
+    return;
+  }
+  if (action === 'edit') {
+    const event = logs[logIndex].events[eventIndex];
+    const currentType = event && event.type ? event.type : '';
+    const nextType = requestEventTypeSelection(currentType);
+    if (nextType === null) return;
+    if (applyEventTextUpdate(logIndex, eventIndex, 'type', nextType)) {
+      saveLogs();
+      refreshActiveView();
+    }
+  }
+}
+
+function ensureEventActionBinding() {
+  if (eventActionHandlerBound) return;
+  if (typeof document === 'undefined') return;
+  eventActionHandlerBound = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!target) return;
+    const actionButton = findEventActionButton(target);
+    if (!actionButton) return;
+    handleEventAction(actionButton);
+  });
+}
+
 function renderCurrentTripCard() {
   if (!currentTripStartTime) return '';
   const pseudoLog = {
@@ -2968,6 +3134,7 @@ function showList() {
   const container = document.getElementById('content');
   if (!container) return;
   ensureInlineEditBinding();
+  ensureEventActionBinding();
   if (logs.length === 0 && !currentTripStartTime) {
     container.innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
     return;
@@ -3029,6 +3196,7 @@ function showDailyReport() {
   const container = document.getElementById('content');
   if (!container) return;
   ensureInlineEditBinding();
+  ensureEventActionBinding();
   if (logs.length === 0) {
     container.innerHTML = '<p>記録がありません。</p>';
     return;
