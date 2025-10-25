@@ -3093,6 +3093,7 @@ function ensureEventActionBinding() {
 
 function renderCurrentTripCard() {
   if (!currentTripStartTime) return '';
+  const dayNumber = calculateTripDayNumber(currentTripStartTime);
   const pseudoLog = {
     startDate: dateToLocalDateString(currentTripStartTime),
     startTime: currentTripStartTime.toTimeString().slice(0, 5),
@@ -3118,6 +3119,7 @@ function renderCurrentTripCard() {
   };
   return renderLogReportCard(pseudoLog, {
     isCurrent: true,
+    contextLabel: dayNumber ? `運行${dayNumber}日目` : '',
     eventEmptyMessage: 'まだイベントは記録されていません。',
     allowInlineTimeEdit: true,
     allowInlineContentEdit: false,
@@ -3126,6 +3128,58 @@ function renderCurrentTripCard() {
     forceEventInlineEdit: true,
     eventContext: 'current-event'
   });
+}
+
+function computeRunDayLabels(logList) {
+  const result = new Map();
+  if (!Array.isArray(logList) || logList.length === 0) return result;
+  const entries = [];
+  logList.forEach((log, index) => {
+    if (!log) return;
+    let canonicalDate = '';
+    if (typeof log.startTimestamp === 'number' && !Number.isNaN(log.startTimestamp)) {
+      canonicalDate = timestampToDateString(log.startTimestamp);
+    }
+    if (!canonicalDate && typeof log.startDate === 'string') {
+      const trimmed = log.startDate.trim();
+      if (trimmed) canonicalDate = trimmed;
+    }
+    if (!canonicalDate && typeof log.endDate === 'string') {
+      const trimmed = log.endDate.trim();
+      if (trimmed) canonicalDate = trimmed;
+    }
+    if (!canonicalDate) return;
+    let normalizedDate = canonicalDate;
+    let orderValue = dateStringToUTC(normalizedDate);
+    if (orderValue === null) {
+      const parsed = Date.parse(normalizedDate);
+      if (!Number.isNaN(parsed)) {
+        normalizedDate = timestampToDateString(parsed);
+        orderValue = dateStringToUTC(normalizedDate);
+      }
+    }
+    if (orderValue === null) return;
+    entries.push({ index, date: normalizedDate, order: orderValue });
+  });
+  if (entries.length === 0) return result;
+  const dateOrder = new Map();
+  entries.forEach(({ date, order }) => {
+    if (!dateOrder.has(date) || order < dateOrder.get(date)) {
+      dateOrder.set(date, order);
+    }
+  });
+  const sortedDates = Array.from(dateOrder.entries()).sort((a, b) => a[1] - b[1]);
+  const dateToDay = new Map();
+  sortedDates.forEach(([date], index) => {
+    dateToDay.set(date, index + 1);
+  });
+  entries.forEach(({ index, date }) => {
+    const dayNumber = dateToDay.get(date);
+    if (dayNumber) {
+      result.set(index, dayNumber);
+    }
+  });
+  return result;
 }
 
 function showList() {
@@ -3139,14 +3193,19 @@ function showList() {
     container.innerHTML = '<p>記録がありません。「新規記録」ボタンから追加してください。</p>';
     return;
   }
+  const dayLabels = computeRunDayLabels(logs);
   const cardsHtml = logs
-    .map((log, index) => renderLogReportCard(log, {
-      index,
-      showActions: true,
-      allowInlineTimeEdit: true,
-      allowInlineContentEdit: true,
-      showNavigationTarget: true
-    }))
+    .map((log, index) => {
+      const dayNumber = dayLabels.get(index);
+      return renderLogReportCard(log, {
+        index,
+        showActions: true,
+        allowInlineTimeEdit: true,
+        allowInlineContentEdit: true,
+        showNavigationTarget: true,
+        contextLabel: dayNumber ? `運行${dayNumber}日目` : ''
+      });
+    })
     .join('');
   const currentCard = currentTripStartTime ? renderCurrentTripCard() : '';
   container.innerHTML = `
