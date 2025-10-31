@@ -21,6 +21,7 @@ let pendingGeocodeQueue = [];
 let cachedGoogleMapsApiKey = null;
 let inlineTimeEditHandlerBound = false;
 let inlineTextEditHandlerBound = false;
+let eventActionHandlerBound = false;
 let geocodeProcessing = false;
 let geocodeProcessingScheduled = false;
 let activeView = 'list';
@@ -256,6 +257,142 @@ function updateTripDayDisplay() {
   } else {
     element.setAttribute('aria-label', mainLabel);
   }
+}
+
+function formatReportDayTitle(dateStr) {
+  if (!dateStr) return '日付未設定';
+  const parts = dateStr.split('-').map((segment) => Number(segment));
+  if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+    const [year, month, day] = parts;
+    const date = new Date(year, month - 1, day);
+    if (!Number.isNaN(date.getTime())) {
+      const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+      const weekday = weekdays[date.getDay()];
+      return `${year}年${month}月${day}日（${weekday}）`;
+    }
+  }
+  return dateStr;
+}
+
+function getLogCanonicalDate(log) {
+  if (!log) return null;
+  if (typeof log.startTimestamp === 'number' && !Number.isNaN(log.startTimestamp)) {
+    const dateStr = timestampToDateString(log.startTimestamp);
+    const orderValue = dateStringToUTC(dateStr);
+    if (dateStr && orderValue !== null) {
+      return { date: dateStr, order: orderValue };
+    }
+  }
+  const candidates = [];
+  if (typeof log.startDate === 'string') {
+    const trimmed = log.startDate.trim();
+    if (trimmed) candidates.push(trimmed);
+  }
+  if (typeof log.endDate === 'string') {
+    const trimmed = log.endDate.trim();
+    if (trimmed) candidates.push(trimmed);
+  }
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    let normalized = candidate;
+    let orderValue = dateStringToUTC(normalized);
+    if (orderValue === null) {
+      const parsed = Date.parse(normalized);
+      if (!Number.isNaN(parsed)) {
+        normalized = timestampToDateString(parsed);
+        orderValue = dateStringToUTC(normalized);
+      }
+    }
+    if (orderValue !== null && normalized) {
+      return { date: normalized, order: orderValue };
+    }
+  }
+  return null;
+}
+
+function groupLogsByDate(logList) {
+  if (!Array.isArray(logList) || logList.length === 0) return [];
+  const groups = new Map();
+  const undatedKey = '__undated__';
+  logList.forEach((log, index) => {
+    if (!log) return;
+    const canonical = getLogCanonicalDate(log);
+    if (canonical) {
+      const { date, order } = canonical;
+      if (!groups.has(date)) {
+        groups.set(date, {
+          key: date,
+          date,
+          order,
+          displayDate: formatReportDayTitle(date),
+          logIndices: [index],
+          dayNumber: null
+        });
+      } else {
+        const group = groups.get(date);
+        group.logIndices.push(index);
+        if (order < group.order) {
+          group.order = order;
+        }
+      }
+    } else if (!groups.has(undatedKey)) {
+      groups.set(undatedKey, {
+        key: undatedKey,
+        date: '',
+        order: Number.POSITIVE_INFINITY,
+        displayDate: '日付未設定',
+        logIndices: [index],
+        dayNumber: null
+      });
+    } else {
+      const group = groups.get(undatedKey);
+      group.logIndices.push(index);
+    }
+  });
+  const sorted = Array.from(groups.values()).sort((a, b) => {
+    if (a.order === b.order) return 0;
+    return a.order < b.order ? -1 : 1;
+  });
+  let counter = 1;
+  sorted.forEach((group) => {
+    if (Number.isFinite(group.order)) {
+      group.dayNumber = counter;
+      counter += 1;
+    } else {
+      group.dayNumber = null;
+    }
+  });
+  return sorted;
+}
+
+function computeRunDayLabels(logList) {
+  const result = new Map();
+  if (!Array.isArray(logList) || logList.length === 0) return result;
+  const entries = [];
+  logList.forEach((log, index) => {
+    const canonical = getLogCanonicalDate(log);
+    if (!canonical) return;
+    entries.push({ index, date: canonical.date, order: canonical.order });
+  });
+  if (entries.length === 0) return result;
+  const dateOrder = new Map();
+  entries.forEach(({ date, order }) => {
+    if (!dateOrder.has(date) || order < dateOrder.get(date)) {
+      dateOrder.set(date, order);
+    }
+  });
+  const sortedDates = Array.from(dateOrder.entries()).sort((a, b) => a[1] - b[1]);
+  const dateToDay = new Map();
+  sortedDates.forEach(([date], index) => {
+    dateToDay.set(date, index + 1);
+  });
+  entries.forEach(({ index, date }) => {
+    const dayNumber = dateToDay.get(date);
+    if (dayNumber) {
+      result.set(index, dayNumber);
+    }
+  });
+  return result;
 }
 
 function startTripDayTicker() {
@@ -2297,11 +2434,12 @@ function renderEventList(events, emptyMessage, options = {}) {
     return `<p class="muted">${emptyMessage || 'イベントは記録されていません。'}</p>`;
   }
   const hasNumericLogIndex = typeof logIndex === 'number' && Number.isInteger(logIndex) && logIndex >= 0;
+  const logKeyValue = logKey === undefined || logKey === null ? '' : String(logKey);
   return `
     <ul class="event-list">
       ${events
         .map((ev, eventIndex) => {
-          const parts = [];
+          const contentParts = [];
           const labelControl = renderInlineTextControl(ev.type || '', {
             editable: allowInlineContentEdit && (forceInlineEdit || (hasNumericLogIndex && eventIndex >= 0)),
             dataset: {
@@ -2314,7 +2452,7 @@ function renderEventList(events, emptyMessage, options = {}) {
             placeholder: '内容未設定',
             displayClass: 'event-label-button'
           });
-          parts.push(`<span class="event-label">${labelControl}</span>`);
+          contentParts.push(`<span class="event-label">${labelControl}</span>`);
           const timeHtml = renderEventTimeRange(ev, {
             allowInlineTimeEdit,
             logIndex: logKey,
@@ -2322,24 +2460,24 @@ function renderEventList(events, emptyMessage, options = {}) {
             forceInlineEdit,
             context: eventContext
           });
-          if (timeHtml) parts.push(timeHtml);
+          if (timeHtml) contentParts.push(timeHtml);
           if (typeof ev.durationSec === 'number' && !Number.isNaN(ev.durationSec) && ev.durationSec > 0) {
             const mins = Math.floor(ev.durationSec / 60);
             const secs = ev.durationSec % 60;
-            parts.push(`<span class="event-duration">${mins}分${secs}秒</span>`);
+            contentParts.push(`<span class="event-duration">${mins}分${secs}秒</span>`);
           }
           if (ev.type === '給油') {
             if (ev.fuelAmount !== '' && ev.fuelAmount !== undefined && ev.fuelAmount !== null) {
-              parts.push(`<span class="event-meta">${ev.fuelAmount}L</span>`);
+              contentParts.push(`<span class="event-meta">${ev.fuelAmount}L</span>`);
             }
             if (ev.fuelPrice !== '' && ev.fuelPrice !== undefined && ev.fuelPrice !== null) {
-              parts.push(`<span class="event-meta">${ev.fuelPrice}円/L</span>`);
+              contentParts.push(`<span class="event-meta">${ev.fuelPrice}円/L</span>`);
             }
           }
           if (ev.type === '積み込み') {
             const cargoText = typeof ev.cargo === 'string' ? ev.cargo.trim() : '';
             if (cargoText) {
-              parts.push(`<span class="event-meta">荷物: ${cargoText}</span>`);
+              contentParts.push(`<span class="event-meta">荷物: ${cargoText}</span>`);
             }
           }
           const locationHtml = formatLocation(ev.location, ev.lat, ev.lon, {
@@ -2350,9 +2488,40 @@ function renderEventList(events, emptyMessage, options = {}) {
             showNavigationTarget
           });
           if (locationHtml) {
-            parts.push(`<span class="event-location">${locationHtml}</span>`);
+            contentParts.push(`<span class="event-location">${locationHtml}</span>`);
           }
-          return `<li>${parts.join(' ')}</li>`;
+          const contentHtml = `<div class="event-content">${contentParts.join(' ')}</div>`;
+          const canModify = eventContext === 'current-event' || hasNumericLogIndex;
+          let actionsHtml = '';
+          if (canModify) {
+            const safeEventContext = escapeHtml(String(eventContext || 'event'));
+            const datasetParts = [
+              `data-event-context="${safeEventContext}"`,
+              `data-event-index="${eventIndex}"`
+            ];
+            if (hasNumericLogIndex) {
+              datasetParts.push(`data-log-index="${escapeHtml(String(logIndex))}"`);
+            } else if (logKeyValue) {
+              datasetParts.push(`data-log-key="${escapeHtml(logKeyValue)}"`);
+            }
+            const buildActionButton = (action, label, extraClass = '', ariaLabel = '') => {
+              const attrs = [
+                'type="button"',
+                `class="event-action-button${extraClass ? ` ${extraClass}` : ''}"`,
+                `data-action="${escapeHtml(action)}"`,
+                ...datasetParts
+              ];
+              if (ariaLabel) {
+                attrs.push(`aria-label="${escapeHtml(ariaLabel)}"`);
+              }
+              return `<button ${attrs.join(' ')}>${escapeHtml(label)}</button>`;
+            };
+            const editButton = buildActionButton('edit', '編集', '', 'イベント内容を変更');
+            const deleteButton = buildActionButton('delete', '削除', 'event-action-button--delete', 'このイベントを削除');
+            actionsHtml = `<div class="event-actions">${editButton}${deleteButton}</div>`;
+          }
+          const rowHtml = actionsHtml ? `<div class="event-row">${contentHtml}${actionsHtml}</div>` : contentHtml;
+          return `<li>${rowHtml}</li>`;
         })
         .join('')}
     </ul>
@@ -2576,6 +2745,34 @@ function requestTimeInput(initialValue, label) {
   }
 }
 
+function requestEventTypeSelection(initialValue) {
+  const entries = Object.entries(eventButtonMap);
+  const messageLines = ['イベント種別を選択してください。'];
+  if (entries.length > 0) {
+    messageLines.push('番号を入力すると候補から選択できます。直接入力も可能です。');
+    entries.forEach(([label], index) => {
+      messageLines.push(`${index + 1}: ${label}`);
+    });
+  } else {
+    messageLines.push('直接入力で種別を指定してください。');
+  }
+  const initial = initialValue === null || initialValue === undefined ? '' : String(initialValue);
+  const input = prompt(messageLines.join('\n'), initial);
+  if (input === null) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  const numeric = Number(trimmed);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= entries.length) {
+    return entries[numeric - 1][0];
+  }
+  const normalized = trimmed.toLowerCase();
+  const labelMatch = entries.find(([label]) => label === trimmed);
+  if (labelMatch) return labelMatch[0];
+  const codeMatch = entries.find(([, map]) => typeof map.code === 'string' && map.code.toLowerCase() === normalized);
+  if (codeMatch) return codeMatch[0];
+  return trimmed;
+}
+
 function mergeTimeIntoTimestamp(baseTimestamp, timeStr) {
   if (typeof baseTimestamp !== 'number' || Number.isNaN(baseTimestamp)) return null;
   if (!timeStr) return null;
@@ -2678,6 +2875,29 @@ function applyEventTextUpdate(logIndex, eventIndex, field, newValue) {
   const trimmed = newValue.trim();
   if (event[key] === trimmed) return false;
   event[key] = trimmed;
+  return true;
+}
+
+function applyCurrentEventTypeUpdate(eventIndex, newValue) {
+  if (!Array.isArray(currentTripEvents) || eventIndex < 0 || eventIndex >= currentTripEvents.length) return false;
+  const event = currentTripEvents[eventIndex];
+  if (!event) return false;
+  const trimmed = typeof newValue === 'string' ? newValue.trim() : '';
+  if (event.type === trimmed) return false;
+  event.type = trimmed;
+  return true;
+}
+
+function deleteLoggedEvent(logIndex, eventIndex) {
+  const log = logs[logIndex];
+  if (!log || !Array.isArray(log.events) || eventIndex < 0 || eventIndex >= log.events.length) return false;
+  log.events.splice(eventIndex, 1);
+  return true;
+}
+
+function deleteCurrentEvent(eventIndex) {
+  if (!Array.isArray(currentTripEvents) || eventIndex < 0 || eventIndex >= currentTripEvents.length) return false;
+  currentTripEvents.splice(eventIndex, 1);
   return true;
 }
 
@@ -2866,8 +3086,91 @@ function ensureInlineEditBinding() {
   ensureInlineTextEditBinding();
 }
 
+function findEventActionButton(element) {
+  if (!element) return null;
+  if (typeof element.closest === 'function') {
+    return element.closest('.event-action-button');
+  }
+  let current = element;
+  while (current) {
+    if (current.classList && current.classList.contains('event-action-button')) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function handleEventAction(element) {
+  const action = element.getAttribute('data-action') || '';
+  const context = element.getAttribute('data-event-context') || 'event';
+  const eventIndexAttr = element.getAttribute('data-event-index');
+  const eventIndex = Number(eventIndexAttr);
+  if (!Number.isFinite(eventIndex) || eventIndex < 0) return;
+  if (context === 'current-event') {
+    if (!Array.isArray(currentTripEvents) || !currentTripEvents[eventIndex]) return;
+    if (action === 'delete') {
+      if (!confirm('このイベントを削除しますか？')) return;
+      if (deleteCurrentEvent(eventIndex)) {
+        saveCurrentTripState();
+        restoreEventButtonStates();
+        refreshActiveView();
+      }
+      return;
+    }
+    if (action === 'edit') {
+      const event = currentTripEvents[eventIndex];
+      const currentType = event && event.type ? event.type : '';
+      const nextType = requestEventTypeSelection(currentType);
+      if (nextType === null) return;
+      if (applyCurrentEventTypeUpdate(eventIndex, nextType)) {
+        saveCurrentTripState();
+        restoreEventButtonStates();
+        refreshActiveView();
+      }
+    }
+    return;
+  }
+  const logIndexAttr = element.getAttribute('data-log-index');
+  const logIndex = Number(logIndexAttr);
+  if (!Number.isFinite(logIndex) || logIndex < 0 || logIndex >= logs.length) return;
+  if (!logs[logIndex] || !Array.isArray(logs[logIndex].events) || !logs[logIndex].events[eventIndex]) return;
+  if (action === 'delete') {
+    if (!confirm('このイベントを削除しますか？')) return;
+    if (deleteLoggedEvent(logIndex, eventIndex)) {
+      saveLogs();
+      refreshActiveView();
+    }
+    return;
+  }
+  if (action === 'edit') {
+    const event = logs[logIndex].events[eventIndex];
+    const currentType = event && event.type ? event.type : '';
+    const nextType = requestEventTypeSelection(currentType);
+    if (nextType === null) return;
+    if (applyEventTextUpdate(logIndex, eventIndex, 'type', nextType)) {
+      saveLogs();
+      refreshActiveView();
+    }
+  }
+}
+
+function ensureEventActionBinding() {
+  if (eventActionHandlerBound) return;
+  if (typeof document === 'undefined') return;
+  eventActionHandlerBound = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!target) return;
+    const actionButton = findEventActionButton(target);
+    if (!actionButton) return;
+    handleEventAction(actionButton);
+  });
+}
+
 function renderCurrentTripCard() {
   if (!currentTripStartTime) return '';
+  const dayNumber = calculateTripDayNumber(currentTripStartTime);
   const pseudoLog = {
     startDate: dateToLocalDateString(currentTripStartTime),
     startTime: currentTripStartTime.toTimeString().slice(0, 5),
@@ -2893,6 +3196,7 @@ function renderCurrentTripCard() {
   };
   return renderLogReportCard(pseudoLog, {
     isCurrent: true,
+    contextLabel: dayNumber ? `運行${dayNumber}日目` : '',
     eventEmptyMessage: 'まだイベントは記録されていません。',
     allowInlineTimeEdit: true,
     allowInlineContentEdit: false,
@@ -2909,6 +3213,7 @@ function showList() {
   const content = document.getElementById('content');
   if (!content) return;
   ensureInlineEditBinding();
+  ensureEventActionBinding();
   if (logs.length === 0 && !currentTripStartTime) {
     content.innerHTML = `
       <div class="view-header">
@@ -2921,28 +3226,88 @@ function showList() {
     `;
     return;
   }
-  const cardsHtml = logs
-    .map((log, index) => renderLogReportCard(log, {
-      index,
-      showActions: true,
-      allowInlineTimeEdit: true,
-      allowInlineContentEdit: true,
-      showNavigationTarget: true
-    }))
-    .join('');
-  const currentCard = currentTripStartTime ? renderCurrentTripCard() : '';
-  const activeNotice = currentTripStartTime
-    ? '<div class="notice">運行中の記録が1件あります。終了すると一覧に反映されます。</div>'
-    : '';
+  const groups = groupLogsByDate(logs);
+  const dayLabels = computeRunDayLabels(logs);
+  const datedGroups = groups.filter((group) => Number.isFinite(group.order));
+  let summaryHtml = '';
+  if (datedGroups.length > 0) {
+    const firstDate = datedGroups[0].date;
+    const lastDate = datedGroups[datedGroups.length - 1].date;
+    const dayCount = datedGroups.length;
+    summaryHtml = `
+      <div class="report-range-summary">
+        <span class="report-range-summary__label">期間</span>
+        <span class="report-range-summary__value">${escapeHtml(firstDate)} ～ ${escapeHtml(lastDate)}</span>
+        <span class="report-range-summary__meta">全${dayCount}日</span>
+      </div>
+    `;
+  }
+  const sections = [];
+  if (currentTripStartTime) {
+    const currentCard = renderCurrentTripCard();
+    if (currentCard) {
+      const startDateLabel = dateToLocalDateString(currentTripStartTime);
+      const headingLabel = startDateLabel ? formatReportDayTitle(startDateLabel) : '日付未設定';
+      const dayNumber = calculateTripDayNumber(currentTripStartTime);
+      const badges = [];
+      if (dayNumber) badges.push(`<span class="report-day__badge">運行${dayNumber}日目</span>`);
+      badges.push('<span class="report-day__badge report-day__badge--current">運行中</span>');
+      const badgesHtml = `<div class="report-day__badges">${badges.join('')}</div>`;
+      sections.push(`
+        <section class="report-day report-day--current">
+          <div class="report-day__header">
+            <h3 class="report-day__title">${escapeHtml(headingLabel)}</h3>
+            ${badgesHtml}
+          </div>
+          <div class="report-day__cards report-grid">
+            ${currentCard}
+          </div>
+        </section>
+      `);
+    }
+  }
+  groups.forEach((group) => {
+    const cardsHtml = group.logIndices
+      .map((index) => {
+        const log = logs[index];
+        if (!log) return '';
+        const dayNumber = dayLabels.get(index);
+        return renderLogReportCard(log, {
+          index,
+          showActions: true,
+          allowInlineTimeEdit: true,
+          allowInlineContentEdit: true,
+          showNavigationTarget: true,
+          contextLabel: dayNumber ? `運行${dayNumber}日目` : ''
+        });
+      })
+      .join('');
+    if (!cardsHtml) return;
+    const badges = [];
+    if (group.dayNumber) {
+      badges.push(`<span class="report-day__badge">運行${group.dayNumber}日目</span>`);
+    }
+    const badgesHtml = badges.length ? `<div class="report-day__badges">${badges.join('')}</div>` : '';
+    sections.push(`
+      <section class="report-day">
+        <div class="report-day__header">
+          <h3 class="report-day__title">${escapeHtml(group.displayDate)}</h3>
+          ${badgesHtml}
+        </div>
+        <div class="report-day__cards report-grid">
+          ${cardsHtml}
+        </div>
+      </section>
+    `);
+  });
+  const sectionsHtml = sections.join('');
   content.innerHTML = `
     <div class="view-header">
       <h2>記録一覧</h2>
-      <p class="view-description">保存した運行を日報形式で確認できます。</p>
+      <p class="view-description">保存した運行を日付ごとに確認できます。</p>
     </div>
-    ${activeNotice}
-    <div class="report-grid">
-      ${currentCard}${cardsHtml}
-    </div>
+    ${summaryHtml}
+    ${sectionsHtml || '<section class="section-card"><p class="muted empty-state">表示できる記録がありません。</p></section>'}
   `;
 }
 
@@ -2982,6 +3347,7 @@ function showDailyReport() {
   const content = document.getElementById('content');
   if (!content) return;
   ensureInlineEditBinding();
+  ensureEventActionBinding();
   if (logs.length === 0) {
     content.innerHTML = `
       <div class="view-header">
